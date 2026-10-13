@@ -1,0 +1,1 @@
+Keep your working LED, buzzer, ultrasonic and motor test sketches here. Copy them into this folder and add the exact board model, GPIOs, supply voltage and date in comments. Do not overwrite your only working copy.
