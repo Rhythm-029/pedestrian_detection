@@ -1,0 +1,24 @@
+project:
+  name: pedestrian_detection_vehicle
+zones:
+  danger_distance_m: 1.0
+  caution_distance_m: 2.0
+  minimum_confidence: 0.50
+  recovery_clear_seconds: 2.0
+communication:
+  baud_rate: 115200
+  heartbeat_period_ms: 100
+  heartbeat_timeout_ms: 500
+  max_message_age_ms: 500
+safety:
+  startup_motor_enable: false
+  stop_on_invalid_message: true
+  stop_on_heartbeat_timeout: true
+  stop_on_ultrasonic_danger: true
+camera:
+  width: 640
+  height: 480
+  fps_target: 15
+distance_estimation:
+  method: placeholder
+  note: "A monocular camera needs calibration; do not treat unvalidated estimates as ground truth."

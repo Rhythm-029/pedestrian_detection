@@ -1,0 +1,23 @@
+# UNVERIFIED PLACEHOLDERS. Do not wire until physical boards and pin labels are confirmed.
+esp32:
+  uart: {rx_gpio: -1, tx_gpio: -1}
+  ultrasonic: {trig_gpio: -1, echo_gpio: -1} # Echo must be level-shifted to <=3.3 V.
+  indicators: {red_led_gpio: -1, buzzer_gpio: -1}
+  motor_driver_1:
+    model: "UNCONFIRMED: invoice mentions TB6612FNG and L298N"
+    stby_gpio: -1
+    ain1_gpio: -1
+    ain2_gpio: -1
+    pwma_gpio: -1
+    bin1_gpio: -1
+    bin2_gpio: -1
+    pwmb_gpio: -1
+  motor_driver_2:
+    model: "UNCONFIRMED: verify physical chip marking"
+    stby_gpio: -1
+    ain1_gpio: -1
+    ain2_gpio: -1
+    pwma_gpio: -1
+    bin1_gpio: -1
+    bin2_gpio: -1
+    pwmb_gpio: -1
