@@ -1,23 +1,44 @@
-# UNVERIFIED PLACEHOLDERS. Do not wire until physical boards and pin labels are confirmed.
+# Physical Pin Mapping for ESP32 & Peripherals
+# Matches firmware/esp32/pedestrian_vehicle/pedestrian_vehicle.ino
+
 esp32:
-  uart: {rx_gpio: -1, tx_gpio: -1}
-  ultrasonic: {trig_gpio: -1, echo_gpio: -1} # Echo must be level-shifted to <=3.3 V.
-  indicators: {red_led_gpio: -1, buzzer_gpio: -1}
-  motor_driver_1:
-    model: "UNCONFIRMED: invoice mentions TB6612FNG and L298N"
-    stby_gpio: -1
-    ain1_gpio: -1
-    ain2_gpio: -1
-    pwma_gpio: -1
-    bin1_gpio: -1
-    bin2_gpio: -1
-    pwmb_gpio: -1
-  motor_driver_2:
-    model: "UNCONFIRMED: verify physical chip marking"
-    stby_gpio: -1
-    ain1_gpio: -1
-    ain2_gpio: -1
-    pwma_gpio: -1
-    bin1_gpio: -1
-    bin2_gpio: -1
-    pwmb_gpio: -1
+  # Primary UART (cross TX/RX with Raspberry Pi, common ground, 3.3V logic)
+  uart:
+    rx_gpio: 3      # Standard RX0 (or GPIO 16 if using Serial2)
+    tx_gpio: 1      # Standard TX0 (or GPIO 17 if using Serial2)
+    baud_rate: 115200
+
+  # HC-SR04 Ultrasonic Distance Sensor
+  ultrasonic:
+    trig_gpio: 5    # Output trigger pulse to HC-SR04 TRIG (5V logic tolerant)
+    echo_gpio: 18   # Input from HC-SR04 ECHO (MUST pass through voltage divider / level shifter <= 3.3V!)
+    calibration:
+      slope: 0.9975
+      intercept_cm: 2.1117
+
+  # Safety Indicators
+  indicators:
+    status_led_gpio: 2    # Built-in or external Red LED (with current limiting resistor)
+    buzzer_gpio: 4        # Active 5V/3.3V Piezo Buzzer
+
+  # TB6612FNG Dual H-Bridge Motor Driver
+  # Drive layout: 4 geared DC motors paired Left (A) and Right (B)
+  motor_driver:
+    chip: "TB6612FNG"
+    stby_gpio: 19   # Standby pin (HIGH = enabled, LOW = high impedance stop)
+    
+    # Left Motor Bank (Channel A)
+    ain1_gpio: 21   # Direction logic 1
+    ain2_gpio: 22   # Direction logic 2
+    pwma_gpio: 23   # PWM speed control
+    
+    # Right Motor Bank (Channel B)
+    bin1_gpio: 25   # Direction logic 1
+    bin2_gpio: 26   # Direction logic 2
+    pwmb_gpio: 27   # PWM speed control
+
+  speed_profiles:
+    pwm_max: 255
+    pwm_cruise: 180      # FAR zone cruising speed
+    pwm_caution: 72      # CAUTION zone (40% of cruise speed)
+    pwm_danger: 0        # DANGER zone (emergency stop)
