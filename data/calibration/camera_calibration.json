@@ -1,0 +1,33 @@
+{
+  "model": "pinhole_bbox_height",
+  "equation": "d = k / h_bbox",
+  "k": 310.5,
+  "resolution": "320x320",
+  "mae_m": 0.008,
+  "samples": [
+    {
+      "distance_m": 1.0,
+      "height_px": 310.0
+    },
+    {
+      "distance_m": 1.5,
+      "height_px": 208.0
+    },
+    {
+      "distance_m": 2.0,
+      "height_px": 155.0
+    },
+    {
+      "distance_m": 2.5,
+      "height_px": 124.0
+    },
+    {
+      "distance_m": 3.0,
+      "height_px": 103.0
+    },
+    {
+      "distance_m": 4.0,
+      "height_px": 78.0
+    }
+  ]
+}
