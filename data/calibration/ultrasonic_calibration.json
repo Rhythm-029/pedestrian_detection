@@ -1,0 +1,22 @@
+{
+  "sensor": "HC-SR04",
+  "units": "cm",
+  "points": [
+    {"actual_cm": 10.0, "sensor_reading_cm": 8.08, "raw_error_cm": -1.92},
+    {"actual_cm": 20.0, "sensor_reading_cm": 18.76, "raw_error_cm": -1.24},
+    {"actual_cm": 30.0, "sensor_reading_cm": 27.68, "raw_error_cm": -2.32},
+    {"actual_cm": 40.0, "sensor_reading_cm": 37.47, "raw_error_cm": -2.53},
+    {"actual_cm": 50.0, "sensor_reading_cm": 47.20, "raw_error_cm": -2.80},
+    {"actual_cm": 60.0, "sensor_reading_cm": 57.56, "raw_error_cm": -2.44},
+    {"actual_cm": 70.0, "sensor_reading_cm": 68.74, "raw_error_cm": -1.26},
+    {"actual_cm": 75.0, "sensor_reading_cm": 73.45, "raw_error_cm": -1.55}
+  ],
+  "fit": {
+    "model": "linear",
+    "equation": "actual_cm = slope * sensor_reading_cm + intercept",
+    "slope": 0.9975,
+    "intercept": 2.1117,
+    "mean_raw_error_cm": -2.0075,
+    "max_residual_cm": 0.8256
+  }
+}
