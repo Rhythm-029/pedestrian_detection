@@ -1,3 +1,4 @@
+from collections import deque
 from dataclasses import dataclass
 import math
 
@@ -25,3 +26,49 @@ def classify_zone(distance_m, confidence, pedestrian, config=ZoneConfig()):
     if distance_m < config.caution_distance_m:
         return "CAUTION"
     return "FAR"
+
+
+class ZoneDebouncer:
+    """Sliding-window temporal filter (3-frame debounce) as specified in Slide 7.
+
+    Prevents instantaneous detection noise or camera drops from causing erratic
+    zone transitions.
+    """
+    def __init__(self, window_size: int = 3):
+        if window_size < 1:
+            raise ValueError("window_size must be >= 1")
+        self.window_size = window_size
+        self._history: deque[str] = deque(maxlen=window_size)
+        self._current_zone = "FAR"
+
+    @property
+    def current_zone(self) -> str:
+        return self._current_zone
+
+    def update(self, instantaneous_zone: str) -> str:
+        if instantaneous_zone not in {"FAR", "CAUTION", "DANGER"}:
+            raise ValueError(f"Unknown zone: {instantaneous_zone}")
+
+        self._history.append(instantaneous_zone)
+
+        # Count occurrences in window
+        danger_count = self._history.count("DANGER")
+        caution_count = self._history.count("CAUTION")
+        far_count = self._history.count("FAR")
+
+        # Conservative safety escalation:
+        # If at least 2 out of 3 frames are DANGER -> DANGER
+        # Or if 2 consecutive DANGER -> DANGER
+        if danger_count >= 2:
+            self._current_zone = "DANGER"
+        elif (danger_count + caution_count) >= 2:
+            self._current_zone = "CAUTION"
+        elif far_count == self.window_size:
+            # Strict de-escalation: requires all frames in window to be clear
+            self._current_zone = "FAR"
+
+        return self._current_zone
+
+    def reset(self):
+        self._history.clear()
+        self._current_zone = "FAR"
