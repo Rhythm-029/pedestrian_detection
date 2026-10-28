@@ -10,6 +10,7 @@ data/test_logs/*
 data/calibration/*
 !data/test_logs/.gitkeep
 !data/calibration/.gitkeep
+!data/calibration/*.json
 models/*.pt
 models/*.onnx
 models/*.tflite
