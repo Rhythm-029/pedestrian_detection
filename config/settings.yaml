@@ -1,24 +1,40 @@
 project:
   name: pedestrian_detection_vehicle
+
 zones:
   danger_distance_m: 1.0
   caution_distance_m: 2.0
   minimum_confidence: 0.50
   recovery_clear_seconds: 2.0
+  debounce_frames: 3
+
 communication:
   baud_rate: 115200
   heartbeat_period_ms: 100
   heartbeat_timeout_ms: 500
   max_message_age_ms: 500
+
 safety:
   startup_motor_enable: false
   stop_on_invalid_message: true
   stop_on_heartbeat_timeout: true
   stop_on_ultrasonic_danger: true
+  ultrasonic_danger_threshold_m: 1.0
+
+sensors:
+  ultrasonic:
+    slope: 0.9975
+    intercept_cm: 2.1117
+    sample_rate_hz: 20
+
 camera:
-  width: 640
-  height: 480
+  inference_width: 320
+  inference_height: 320
+  capture_width: 640
+  capture_height: 480
   fps_target: 15
+
 distance_estimation:
-  method: placeholder
-  note: "A monocular camera needs calibration; do not treat unvalidated estimates as ground truth."
+  method: "pinhole_bbox_height"
+  formula: "d = k / h_bbox"
+  default_k: 320.0
