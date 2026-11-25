@@ -1,6 +1,38 @@
 # Pedestrian Detection Vehicle
 
-Starter repository for a Raspberry Pi 4 + Camera Module V2 (IMX219), ESP32, HC-SR04 ultrasonic sensor, four geared DC motors, and two motor-driver boards.
+Autonomous pedestrian detection and emergency braking vehicle using a Raspberry Pi 4 + Camera V2 (IMX219), ESP32 DevKit V1, HC-SR04 ultrasonic sensor, four DC gear motors (TB6612FNG driver), 3-pin buzzer, and LED.
+
+> **Hardware status (2026-11-24):** All hardware physically connected and verified — motors slow down based on detected distance. ✅
+
+---
+
+## 🌐 Web UI (Quick Start)
+
+The Web UI lets you monitor live sensor data, inject safety zones, run tests, and view the serial monitor — all from a browser.
+
+```bash
+cd /Users/yashwardhansingh/pedestrian_detection
+python3 scripts/start_web_ui.py --port 8080
+```
+Then open: **http://localhost:8080**
+
+> **Note:** macOS reserves port 5000 for AirPlay Receiver. Use `--port 8080` (or any free port).
+
+### Web UI Features
+
+| Panel | What it does |
+|---|---|
+| **Navbar** | Select ESP32 serial port + baud, scan ports, Connect/Disconnect |
+| **Safety Zone** | Live colour-coded zone (FAR=green, CAUTION=amber, DANGER=red blinking) |
+| **Camera Distance** | Pedestrian distance from Pi camera (pinhole model) |
+| **Detection Confidence** | YOLO detection confidence + pedestrian present/absent |
+| **ESP32 FSM State** | Inferred state machine state (FAR / CAUTION / DANGER_LATCHED / COMM_FAULT) |
+| **Ultrasonic Panel** | Raw + calibrated HC-SR04 reading with visual 0–75 cm bar |
+| **Zone Controller** | Inject FAR / CAUTION / DANGER messages (single send or 10 Hz heartbeat) |
+| **Test Runner** | Run pytest suite + Pi simulation scenarios (demo / heartbeat_timeout / continuous_cruise) |
+| **Serial Monitor** | Colour-coded live ESP32 serial output with auto-scroll |
+
+---
 
 ## Architecture
 - Raspberry Pi: camera capture, pedestrian detection, distance estimate, safety-zone decision, UART transport.
