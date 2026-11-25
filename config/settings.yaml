@@ -11,21 +11,23 @@ zones:
 communication:
   baud_rate: 115200
   heartbeat_period_ms: 100
-  heartbeat_timeout_ms: 500
-  max_message_age_ms: 500
+  heartbeat_timeout_ms: 300   # corrected from 500 — matches original spec
+  max_message_age_ms: 300
 
 safety:
   startup_motor_enable: false
   stop_on_invalid_message: true
   stop_on_heartbeat_timeout: true
   stop_on_ultrasonic_danger: true
-  ultrasonic_danger_threshold_m: 1.0
+  ultrasonic_danger_threshold_cm: 50   # cm — within calibrated range (10–75 cm)
+  ultrasonic_danger_threshold_m: 0.50  # metres equivalent
 
 sensors:
   ultrasonic:
-    slope: 0.9975
-    intercept_cm: 2.1117
+    calibration_method: piecewise_linear
+    calibration_range_cm: [10, 75]
     sample_rate_hz: 20
+    danger_threshold_cm: 50
 
 camera:
   inference_width: 320
@@ -37,4 +39,5 @@ camera:
 distance_estimation:
   method: "pinhole_bbox_height"
   formula: "d = k / h_bbox"
-  default_k: 320.0
+  default_k: 310.5
+  calibrated_mae_m: 0.008
