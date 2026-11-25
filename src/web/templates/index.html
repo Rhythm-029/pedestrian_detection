@@ -1,0 +1,2031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>PDV — Pedestrian Detection Vehicle</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+/* ===================================================================
+   DESIGN SYSTEM — Dark Automotive Dashboard
+   =================================================================== */
+:root {
+  --bg:         #0b0e1a;
+  --bg2:        #111728;
+  --bg3:        #1a2035;
+  --border:     #1e2d4a;
+  --border2:    #2a3d5e;
+  --text:       #e2e8f4;
+  --text-dim:   #6b7fa3;
+  --text-muted: #3f5280;
+  --cyan:       #00d4ff;
+  --cyan-dim:   rgba(0,212,255,0.12);
+  --cyan-glow:  rgba(0,212,255,0.3);
+  --green:      #00e676;
+  --green-dim:  rgba(0,230,118,0.12);
+  --amber:      #ffb300;
+  --amber-dim:  rgba(255,179,0,0.12);
+  --red:        #ff3d71;
+  --red-dim:    rgba(255,61,113,0.12);
+  --red-glow:   rgba(255,61,113,0.4);
+  --purple:     #7c3aed;
+  --radius:     12px;
+  --radius-sm:  8px;
+  --shadow:     0 4px 24px rgba(0,0,0,0.5);
+  --transition: 0.2s ease;
+  --sidebar-w:  220px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+/* ===================================================================
+   TOPBAR
+   =================================================================== */
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  height: 56px;
+  background: rgba(11,14,26,0.95);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 20px; gap: 16px;
+}
+.topbar-brand {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 700; font-size: 15px; letter-spacing: 0.5px;
+  color: var(--text); white-space: nowrap;
+}
+.topbar-brand svg { color: var(--cyan); }
+.topbar-spacer { flex: 1; }
+
+/* Connection area */
+.conn-group {
+  display: flex; align-items: center; gap: 8px;
+}
+.conn-select {
+  background: var(--bg3); border: 1px solid var(--border2);
+  color: var(--text); padding: 5px 10px; border-radius: var(--radius-sm);
+  font-size: 12px; cursor: pointer; outline: none;
+}
+.conn-select:focus { border-color: var(--cyan); }
+.btn { 
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  border: none; transition: all var(--transition); white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-cyan  { background: var(--cyan);  color: #000; }
+.btn-cyan:hover:not(:disabled)  { background: #33ddff; transform: translateY(-1px); }
+.btn-red   { background: var(--red);   color: #fff; }
+.btn-red:hover:not(:disabled)   { background: #ff5588; transform: translateY(-1px); }
+.btn-green { background: var(--green); color: #000; }
+.btn-green:hover:not(:disabled) { background: #33ef88; transform: translateY(-1px); }
+.btn-ghost {
+  background: transparent; border: 1px solid var(--border2); color: var(--text-dim);
+}
+.btn-ghost:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); }
+.btn-amber { background: var(--amber); color: #000; }
+.btn-amber:hover:not(:disabled) { background: #ffc333; }
+
+/* E-STOP */
+.estop-btn {
+  background: var(--red); color: #fff;
+  font-size: 11px; font-weight: 800; letter-spacing: 1px;
+  padding: 6px 16px; border-radius: 6px;
+  border: 1px solid rgba(255,61,113,0.5);
+  box-shadow: 0 0 12px var(--red-glow);
+  animation: estop-pulse 2s ease-in-out infinite;
+  cursor: pointer;
+}
+@keyframes estop-pulse {
+  0%,100% { box-shadow: 0 0 12px var(--red-glow); }
+  50%      { box-shadow: 0 0 24px var(--red-glow), 0 0 48px rgba(255,61,113,0.2); }
+}
+.estop-btn:hover { background: #ff5588; transform: scale(1.05); }
+
+/* Status pill */
+.status-pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 20px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+  background: var(--bg3); border: 1px solid var(--border);
+}
+.dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-muted);
+  transition: background var(--transition);
+}
+.dot.green  { background: var(--green);  box-shadow: 0 0 6px var(--green); }
+.dot.red    { background: var(--red);    box-shadow: 0 0 6px var(--red); }
+.dot.amber  { background: var(--amber);  box-shadow: 0 0 6px var(--amber); }
+.dot.cyan   { background: var(--cyan);   box-shadow: 0 0 6px var(--cyan); }
+.dot.pulse  { animation: dot-pulse 1s ease infinite; }
+@keyframes dot-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* ===================================================================
+   SIDEBAR
+   =================================================================== */
+.layout { display: flex; padding-top: 56px; min-height: 100vh; }
+.sidebar {
+  width: var(--sidebar-w); min-height: calc(100vh - 56px);
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  position: fixed; top: 56px; left: 0; bottom: 0;
+  overflow-y: auto; z-index: 50;
+  transition: transform var(--transition);
+  padding: 16px 0;
+}
+.sidebar-section {
+  padding: 0 12px 8px;
+  font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+  color: var(--text-muted); text-transform: uppercase;
+  margin-top: 16px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 16px; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: var(--text-dim);
+  border-radius: 0; border-left: 3px solid transparent;
+  transition: all var(--transition); text-decoration: none;
+  user-select: none;
+}
+.nav-item:hover { background: var(--bg3); color: var(--text); }
+.nav-item.active {
+  background: var(--cyan-dim); color: var(--cyan);
+  border-left-color: var(--cyan);
+}
+.nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+.nav-badge {
+  margin-left: auto; background: var(--red); color: #fff;
+  font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px;
+}
+
+/* ===================================================================
+   MAIN CONTENT
+   =================================================================== */
+.main { margin-left: var(--sidebar-w); flex: 1; padding: 24px; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* Page header */
+.page-header {
+  margin-bottom: 24px;
+  display: flex; align-items: center; gap: 16px;
+}
+.page-title { font-size: 22px; font-weight: 700; }
+.page-subtitle { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+
+/* Grid layouts */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.col-span-2 { grid-column: span 2; }
+
+/* Card */
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  transition: border-color var(--transition);
+}
+.card:hover { border-color: var(--border2); }
+.card-title {
+  font-size: 11px; font-weight: 700; letter-spacing: 1px;
+  color: var(--text-dim); text-transform: uppercase;
+  margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+}
+.card-title svg { width: 14px; height: 14px; }
+.card-value {
+  font-size: 36px; font-weight: 800; letter-spacing: -1px;
+  color: var(--text); line-height: 1;
+}
+.card-unit {
+  font-size: 13px; font-weight: 400; color: var(--text-dim); margin-left: 4px;
+}
+.card-sub {
+  font-size: 12px; color: var(--text-dim); margin-top: 8px;
+}
+
+/* ===================================================================
+   OVERVIEW PAGE
+   =================================================================== */
+
+/* KPI row */
+.kpi-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 24px; }
+.kpi {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px 20px;
+  display: flex; align-items: center; gap: 16px;
+}
+.kpi-icon {
+  width: 44px; height: 44px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.kpi-icon.cyan   { background: var(--cyan-dim);  color: var(--cyan); }
+.kpi-icon.green  { background: var(--green-dim); color: var(--green); }
+.kpi-icon.amber  { background: var(--amber-dim); color: var(--amber); }
+.kpi-icon.red    { background: var(--red-dim);   color: var(--red); }
+.kpi-label { font-size: 11px; color: var(--text-dim); font-weight: 600; letter-spacing: 0.5px; }
+.kpi-value { font-size: 22px; font-weight: 800; color: var(--text); line-height: 1.1; }
+.kpi-sub   { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+/* Vehicle visualization */
+.vehicle-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 24px;
+  display: flex; flex-direction: column; align-items: center;
+  min-height: 340px;
+}
+.vehicle-container {
+  position: relative; width: 220px; height: 260px;
+  display: flex; align-items: center; justify-content: center;
+}
+/* Proximity rings */
+.prox-ring {
+  position: absolute; border-radius: 50%;
+  border: 1px dashed; opacity: 0.25;
+  transition: opacity 0.5s, border-color 0.5s;
+}
+.prox-ring.danger  { width: 110px; height: 110px; border-color: var(--red); }
+.prox-ring.caution { width: 165px; height: 165px; border-color: var(--amber); }
+.prox-ring.safe    { width: 220px; height: 220px; border-color: var(--green); }
+.prox-ring.active  { opacity: 0.6; }
+.vehicle-svg { z-index: 2; filter: drop-shadow(0 4px 20px rgba(0,212,255,0.25)); }
+
+/* Zone badge below vehicle */
+.zone-badge {
+  margin-top: 20px; padding: 8px 24px;
+  border-radius: 24px; font-size: 14px; font-weight: 800;
+  letter-spacing: 1px; text-transform: uppercase;
+  border: 2px solid; transition: all 0.4s;
+}
+.zone-badge.far     { color: var(--green); border-color: var(--green);  background: var(--green-dim); }
+.zone-badge.caution { color: var(--amber); border-color: var(--amber); background: var(--amber-dim); }
+.zone-badge.danger  { color: var(--red);   border-color: var(--red);   background: var(--red-dim); animation: danger-flash 0.6s ease infinite; }
+.zone-badge.unknown { color: var(--text-dim); border-color: var(--border); background: transparent; }
+@keyframes danger-flash { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+/* Distance arc */
+.arc-container { position: relative; width: 180px; height: 100px; margin-top: 20px; }
+
+/* Motor gauge bars */
+.motor-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.motor-label { font-size: 11px; font-weight: 700; color: var(--text-dim); width: 24px; }
+.motor-bar {
+  flex: 1; height: 8px; background: var(--bg3);
+  border-radius: 4px; overflow: hidden;
+}
+.motor-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, var(--cyan), var(--green));
+  width: 0%; transition: width 0.4s;
+}
+.motor-pct { font-size: 11px; color: var(--text-dim); width: 36px; text-align: right; }
+
+/* System status table */
+.sys-row {
+  display: flex; align-items: center; padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px; gap: 12px;
+}
+.sys-row:last-child { border-bottom: none; }
+.sys-icon { width: 28px; height: 28px; border-radius: 6px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:14px; }
+.sys-name { flex:1; color: var(--text); font-weight: 500; }
+.sys-val  { color: var(--text-dim); font-size: 12px; }
+.badge {
+  display: inline-block; padding: 2px 10px; border-radius: 12px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
+}
+.badge-green  { background: var(--green-dim); color: var(--green);  border: 1px solid rgba(0,230,118,0.3); }
+.badge-red    { background: var(--red-dim);   color: var(--red);    border: 1px solid rgba(255,61,113,0.3); }
+.badge-amber  { background: var(--amber-dim); color: var(--amber);  border: 1px solid rgba(255,179,0,0.3); }
+.badge-grey   { background: var(--bg3);       color: var(--text-dim); border: 1px solid var(--border); }
+.badge-cyan   { background: var(--cyan-dim);  color: var(--cyan);   border: 1px solid rgba(0,212,255,0.3); }
+
+/* ===================================================================
+   HARDWARE TESTING PAGE
+   =================================================================== */
+.hw-section { margin-bottom: 28px; }
+.hw-section-title {
+  font-size: 12px; font-weight: 700; letter-spacing: 1px; color: var(--text-dim);
+  text-transform: uppercase; margin-bottom: 14px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+}
+.test-btn-group { display: flex; flex-wrap: wrap; gap: 10px; }
+.test-btn {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 16px 20px; min-width: 100px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--radius); cursor: pointer;
+  transition: all var(--transition); font-size: 12px; font-weight: 600;
+  color: var(--text-dim); gap: 8px;
+}
+.test-btn:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
+.test-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.test-btn .tb-icon { font-size: 20px; }
+.test-btn .tb-status { font-size: 10px; font-weight: 500; color: var(--text-muted); margin-top: 2px; }
+.test-btn.pending .tb-icon { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* PWM slider */
+.pwm-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: 14px;
+}
+.pwm-row label { font-size: 12px; color: var(--text-dim); font-weight: 600; white-space: nowrap; }
+.pwm-slider {
+  flex: 1; -webkit-appearance: none; height: 4px;
+  background: linear-gradient(to right, var(--cyan) 0%, var(--cyan) var(--pct,20%), var(--bg) var(--pct,20%));
+  border-radius: 2px; outline: none; cursor: pointer;
+}
+.pwm-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--cyan); border: 2px solid var(--bg); cursor: pointer;
+  box-shadow: 0 0 8px var(--cyan-glow);
+}
+.pwm-val {
+  font-size: 14px; font-weight: 800; color: var(--cyan); min-width: 48px; text-align: right;
+}
+
+/* Mode indicator */
+.mode-panel {
+  display: flex; align-items: center; gap: 14px; padding: 14px 20px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: 20px;
+}
+.mode-label { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+.mode-value { font-size: 14px; font-weight: 800; color: var(--amber); flex: 1; }
+.mode-auto  { color: var(--green); }
+.mode-diag  { color: var(--amber); }
+
+/* ===================================================================
+   SERIAL MONITOR PAGE
+   =================================================================== */
+.log-toolbar {
+  display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap;
+}
+.log-filter {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.chip {
+  padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all var(--transition);
+  background: var(--bg3); border: 1px solid var(--border); color: var(--text-dim);
+  user-select: none;
+}
+.chip.active { background: var(--cyan-dim); border-color: var(--cyan); color: var(--cyan); }
+.log-box {
+  background: #060810; border: 1px solid var(--border);
+  border-radius: var(--radius); height: 420px; overflow-y: auto;
+  padding: 14px; font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 12px; line-height: 1.6;
+}
+.log-line { display: flex; gap: 10px; padding: 1px 0; }
+.log-ts   { color: var(--text-muted); min-width: 70px; }
+.log-txt  { word-break: break-all; }
+.log-txt.tx   { color: var(--cyan); }
+.log-txt.rx   { color: var(--green); }
+.log-txt.ack  { color: var(--green); font-weight: 700; }
+.log-txt.nack { color: var(--red); font-weight: 700; }
+.log-txt.us   { color: var(--amber); }
+.log-txt.err  { color: var(--red); }
+.log-txt.info { color: var(--text-dim); }
+.log-txt.status { color: var(--purple); }
+.log-txt.caps   { color: #a78bfa; }
+
+/* ===================================================================
+   SAFETY SYSTEM PAGE
+   =================================================================== */
+.pipeline-row {
+  display: flex; align-items: center; gap: 0; margin: 20px 0; overflow-x: auto; padding-bottom: 4px;
+}
+.pipe-step {
+  flex: 1; min-width: 110px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 12px;
+  text-align: center; font-size: 11px; font-weight: 700;
+  color: var(--text-dim); letter-spacing: 0.5px;
+  transition: all 0.4s;
+}
+.pipe-step.active { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
+.pipe-step.ok     { border-color: var(--green); color: var(--green); background: var(--green-dim); }
+.pipe-step.warn   { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
+.pipe-step.danger { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+.pipe-arrow { color: var(--border2); font-size: 20px; padding: 0 4px; flex-shrink: 0; }
+.pipe-icon  { font-size: 22px; margin-bottom: 6px; }
+.pipe-label { font-size: 10px; }
+
+/* FSM state display */
+.fsm-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 10px; }
+.fsm-state {
+  padding: 14px 8px; border-radius: var(--radius); text-align: center;
+  background: var(--bg3); border: 2px solid var(--border);
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+  transition: all 0.4s; letter-spacing: 0.5px;
+}
+.fsm-state.current.boot    { border-color: var(--text-dim); color: var(--text); background: var(--bg3); }
+.fsm-state.current.far     { border-color: var(--green); color: var(--green); background: var(--green-dim); }
+.fsm-state.current.caution { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
+.fsm-state.current.danger  { border-color: var(--red); color: var(--red); background: var(--red-dim); animation: danger-flash 0.8s ease infinite; }
+.fsm-state.current.fault   { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+.fsm-state.current.diag    { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
+.fsm-state-icon { font-size: 20px; margin-bottom: 6px; }
+.fsm-state-label { font-size: 10px; }
+
+/* ===================================================================
+   TEST REPORTS
+   =================================================================== */
+.test-output-box {
+  background: #060810; border: 1px solid var(--border);
+  border-radius: var(--radius); height: 300px; overflow-y: auto;
+  padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.6;
+  color: var(--text-dim);
+}
+.test-line.pass    { color: var(--green); }
+.test-line.fail    { color: var(--red); }
+.test-line.warning { color: var(--amber); }
+.test-line.error   { color: var(--red); font-weight: 700; }
+.result-row {
+  display: flex; align-items: center; padding: 10px 14px;
+  border-bottom: 1px solid var(--border); gap: 12px;
+  font-size: 12px; transition: background var(--transition);
+}
+.result-row:hover { background: var(--bg3); }
+.result-row:last-child { border-bottom: none; }
+
+/* ===================================================================
+   SETTINGS PAGE
+   =================================================================== */
+.setting-row {
+  display: flex; align-items: center; padding: 14px 0;
+  border-bottom: 1px solid var(--border); gap: 20px;
+}
+.setting-row:last-child { border-bottom: none; }
+.setting-info { flex: 1; }
+.setting-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.setting-desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.setting-ctrl input {
+  background: var(--bg3); border: 1px solid var(--border);
+  color: var(--text); padding: 6px 12px; border-radius: var(--radius-sm);
+  font-size: 13px; outline: none; min-width: 100px; text-align: right;
+}
+.setting-ctrl input:focus { border-color: var(--cyan); }
+
+/* ===================================================================
+   TOAST NOTIFICATIONS
+   =================================================================== */
+#toast-stack {
+  position: fixed; bottom: 20px; right: 20px; z-index: 1000;
+  display: flex; flex-direction: column; gap: 8px; max-width: 320px;
+}
+.toast {
+  padding: 12px 16px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 10px;
+  animation: toast-in 0.25s ease; box-shadow: var(--shadow);
+  border-left: 3px solid;
+}
+@keyframes toast-in { from { opacity:0; transform: translateX(20px); } to { opacity:1; transform: translateX(0); } }
+.toast.success  { background: #0a1f14; border-color: var(--green); color: var(--green); }
+.toast.warning  { background: #1a140a; border-color: var(--amber); color: var(--amber); }
+.toast.danger   { background: #1a0a0a; border-color: var(--red);   color: var(--red); }
+.toast.info     { background: #0a1420; border-color: var(--cyan);   color: var(--cyan); }
+.toast.secondary { background: var(--bg3); border-color: var(--border); color: var(--text-dim); }
+
+/* Modal overlay */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+  display: none; align-items: center; justify-content: center; z-index: 200;
+  backdrop-filter: blur(4px);
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: var(--radius); padding: 32px; max-width: 440px; width: 90%;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+}
+.modal-title { font-size: 18px; font-weight: 700; margin-bottom: 12px; color: var(--red); }
+.modal-body  { font-size: 13px; color: var(--text-dim); line-height: 1.6; margin-bottom: 20px; }
+.modal-footer { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* ===================================================================
+   MISC UTILS
+   =================================================================== */
+.divider { height: 1px; background: var(--border); margin: 20px 0; }
+.mb8 { margin-bottom: 8px; }
+.mb16 { margin-bottom: 16px; }
+.mb24 { margin-bottom: 24px; }
+.mt16 { margin-top: 16px; }
+.flex { display: flex; }
+.flex-center { display: flex; align-items: center; }
+.gap8 { gap: 8px; }
+.gap12 { gap: 12px; }
+.flex1 { flex: 1; }
+.text-cyan { color: var(--cyan); }
+.text-green { color: var(--green); }
+.text-red { color: var(--red); }
+.text-amber { color: var(--amber); }
+.text-dim { color: var(--text-dim); }
+.text-sm { font-size: 12px; }
+.text-xs { font-size: 11px; }
+.fw700 { font-weight: 700; }
+.scroll-x { overflow-x: auto; }
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+@media (max-width: 1100px) {
+  .kpi-grid { grid-template-columns: repeat(2,1fr); }
+  .grid-3 { grid-template-columns: 1fr 1fr; }
+  .fsm-grid { grid-template-columns: repeat(3,1fr); }
+}
+@media (max-width: 768px) {
+  :root { --sidebar-w: 0px; }
+  .sidebar { transform: translateX(-220px); }
+  .sidebar.open { width: 220px; transform: translateX(0); }
+  .main { margin-left: 0; padding: 16px; }
+  .kpi-grid { grid-template-columns: 1fr 1fr; }
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .col-span-2 { grid-column: span 1; }
+}
+</style>
+</head>
+<body>
+
+<!-- ================================================================
+     TOPBAR
+     ================================================================ -->
+<header class="topbar">
+  <div class="topbar-brand">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+    </svg>
+    PDV Control
+  </div>
+
+  <div class="conn-group" style="margin-left:16px">
+    <select class="conn-select" id="portSelect" style="min-width:210px">
+      <option value="">— Select Port —</option>
+    </select>
+    <button class="btn btn-ghost" title="Refresh port list" onclick="loadPorts()" style="padding:6px 10px;font-size:14px">↻</button>
+    <select class="conn-select" id="baudSelect">
+      <option value="115200">115200</option>
+      <option value="9600">9600</option>
+      <option value="57600">57600</option>
+    </select>
+    <button class="btn btn-cyan" id="connectBtn" onclick="connectSerial()">Connect</button>
+    <button class="btn btn-ghost" id="disconnectBtn" onclick="disconnectSerial()" disabled>Disconnect</button>
+  </div>
+
+  <div class="topbar-spacer"></div>
+
+  <div class="status-pill" id="esp32Pill">
+    <span class="dot" id="esp32Dot"></span>
+    <span id="esp32PillText">ESP32 Disconnected</span>
+  </div>
+
+  <div class="status-pill" id="modePill" style="cursor:pointer" title="Click to switch mode" onclick="toggleModePanel()">
+    <span class="dot amber"></span>
+    <span id="modePillText">AUTO</span>
+  </div>
+
+  <button class="estop-btn" onclick="emergencyStop()">⛔ E-STOP</button>
+</header>
+
+<!-- ================================================================
+     SIDEBAR
+     ================================================================ -->
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-section">Monitor</div>
+  <div class="nav-item active" onclick="showPage('overview')" data-page="overview">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+    Overview
+  </div>
+  <div class="nav-item" onclick="showPage('safety')" data-page="safety">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    Safety System
+  </div>
+
+  <div class="sidebar-section">Hardware</div>
+  <div class="nav-item" onclick="showPage('hardware')" data-page="hardware">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+    Hardware Tests
+  </div>
+  <div class="nav-item" onclick="showPage('camera')" data-page="camera">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+    Camera & YOLO
+  </div>
+
+  <div class="sidebar-section">Communication</div>
+  <div class="nav-item" onclick="showPage('serial')" data-page="serial">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+    Serial Monitor
+    <span class="nav-badge" id="serialBadge" style="display:none">!</span>
+  </div>
+  <div class="nav-item" onclick="showPage('zones')" data-page="zones">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.57a19.79 19.79 0 01-3.07-8.67A2 2 0 012 .84h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 8.72a16 16 0 006.29 6.29l1.17-1.17a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+    Zone Injection
+  </div>
+
+  <div class="sidebar-section">Analysis</div>
+  <div class="nav-item" onclick="showPage('reports')" data-page="reports">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+    Test Reports
+  </div>
+  <div class="nav-item" onclick="showPage('settings')" data-page="settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    Settings
+  </div>
+</nav>
+
+<!-- ================================================================
+     MAIN CONTENT
+     ================================================================ -->
+<main class="main">
+
+  <!-- =================== OVERVIEW PAGE =================== -->
+  <div class="page active" id="page-overview">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Mission Overview</div>
+        <div class="page-subtitle">Live system telemetry & vehicle status</div>
+      </div>
+      <button class="btn btn-ghost" style="margin-left:auto" onclick="refreshStatus()">↻ Refresh</button>
+    </div>
+
+    <!-- KPI row -->
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="kpi-icon cyan">📡</div>
+        <div>
+          <div class="kpi-label">ESP32 State</div>
+          <div class="kpi-value" id="kpi-state">—</div>
+          <div class="kpi-sub" id="kpi-mode">Mode: —</div>
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-icon green">📏</div>
+        <div>
+          <div class="kpi-label">Ultrasonic Distance</div>
+          <div class="kpi-value"><span id="kpi-us">—</span><span class="card-unit">cm</span></div>
+          <div class="kpi-sub" id="kpi-us-status">Status: —</div>
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-icon amber">🎯</div>
+        <div>
+          <div class="kpi-label">Detection Confidence</div>
+          <div class="kpi-value"><span id="kpi-conf">—</span><span class="card-unit">%</span></div>
+          <div class="kpi-sub" id="kpi-ped">Pedestrian: —</div>
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-icon red">⚡</div>
+        <div>
+          <div class="kpi-label">Safety Zone</div>
+          <div class="kpi-value" id="kpi-zone" style="font-size:18px">UNKNOWN</div>
+          <div class="kpi-sub" id="kpi-dist">Distance: —</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main 3-column grid -->
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:20px;margin-bottom:20px">
+      <!-- Vehicle visualization -->
+      <div class="vehicle-card">
+        <div class="card-title" style="margin-bottom:10px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="22" height="13" rx="2"/><polygon points="1 20 23 20 20 16 4 16"/></svg>
+          Vehicle Status
+        </div>
+        <div class="vehicle-container">
+          <div class="prox-ring safe" id="ring-safe"></div>
+          <div class="prox-ring caution" id="ring-caution"></div>
+          <div class="prox-ring danger" id="ring-danger"></div>
+          <!-- Top-down car SVG -->
+          <svg class="vehicle-svg" width="80" height="140" viewBox="0 0 80 140">
+            <!-- Body -->
+            <rect x="12" y="20" width="56" height="100" rx="12" fill="#1a2035" stroke="#2a3d5e" stroke-width="1.5"/>
+            <!-- Windshield -->
+            <rect x="18" y="30" width="44" height="28" rx="4" fill="#0d1620" stroke="#00d4ff" stroke-width="1" opacity="0.7"/>
+            <!-- Rear window -->
+            <rect x="18" y="84" width="44" height="24" rx="4" fill="#0d1620" stroke="#2a3d5e" stroke-width="1" opacity="0.5"/>
+            <!-- Hood detail -->
+            <rect x="22" y="22" width="36" height="10" rx="3" fill="#2a3d5e" opacity="0.6"/>
+            <!-- Headlights -->
+            <rect x="13" y="22" width="10" height="6" rx="2" fill="#00d4ff" opacity="0.9"/>
+            <rect x="57" y="22" width="10" height="6" rx="2" fill="#00d4ff" opacity="0.9"/>
+            <!-- Tail lights -->
+            <rect x="13" y="112" width="10" height="6" rx="2" fill="#ff3d71" id="tail-l"/>
+            <rect x="57" y="112" width="10" height="6" rx="2" fill="#ff3d71" id="tail-r"/>
+            <!-- Wheels -->
+            <rect x="2"  y="30" width="12" height="22" rx="4" fill="#2a3d5e" stroke="#3f5280" stroke-width="1"/>
+            <rect x="66" y="30" width="12" height="22" rx="4" fill="#2a3d5e" stroke="#3f5280" stroke-width="1"/>
+            <rect x="2"  y="90" width="12" height="22" rx="4" fill="#2a3d5e" stroke="#3f5280" stroke-width="1"/>
+            <rect x="66" y="90" width="12" height="22" rx="4" fill="#2a3d5e" stroke="#3f5280" stroke-width="1"/>
+            <!-- Camera (front) -->
+            <circle cx="40" cy="18" r="4" fill="#7c3aed" stroke="#a78bfa" stroke-width="1"/>
+            <!-- US sensor -->
+            <rect x="34" y="12" width="12" height="4" rx="1" fill="#00d4ff" opacity="0.5"/>
+            <!-- LED indicator -->
+            <circle cx="30" cy="62" r="4" fill="#1a2035" stroke="#2a3d5e" stroke-width="1.5" id="led-ind"/>
+            <!-- LED label -->
+            <text x="39" y="65" fill="#3f5280" font-size="6" font-family="monospace">LED</text>
+          </svg>
+        </div>
+        <div class="zone-badge unknown" id="zoneBadge">NO DATA</div>
+        <div style="margin-top:16px;width:100%">
+          <div class="motor-row">
+            <span class="motor-label">Ch A</span>
+            <div class="motor-bar"><div class="motor-fill" id="motorFillA"></div></div>
+            <span class="motor-pct" id="motorPctA">0%</span>
+          </div>
+          <div class="motor-row">
+            <span class="motor-label">Ch B</span>
+            <div class="motor-bar"><div class="motor-fill" id="motorFillB"></div></div>
+            <span class="motor-pct" id="motorPctB">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Subsystem status -->
+      <div class="card">
+        <div class="card-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          Subsystems
+        </div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--cyan-dim);color:var(--cyan)">📡</div>
+          <div class="sys-name">ESP32</div>
+          <div class="sys-val"><span class="badge badge-grey" id="ss-esp32">DISC</span></div>
+        </div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--green-dim);color:var(--green)">📏</div>
+          <div class="sys-name">Ultrasonic</div>
+          <div class="sys-val"><span class="badge badge-grey" id="ss-us">—</span></div>
+        </div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--amber-dim);color:var(--amber)">💡</div>
+          <div class="sys-name">LED (GPIO 23)</div>
+          <div class="sys-val"><span class="badge badge-grey" id="ss-led">OFF</span></div>
+        </div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--red-dim);color:var(--red)">🔊</div>
+          <div class="sys-name">Buzzer (GPIO 22)</div>
+          <div class="sys-val"><span class="badge badge-grey" id="ss-buzzer">OFF</span></div>
+        </div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--bg3);color:var(--text-dim)">⚙️</div>
+          <div class="sys-name">Motors (TB6612)</div>
+          <div class="sys-val"><span class="badge badge-grey" id="ss-motors">LOCKED</span></div>
+        </div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--bg3);color:var(--text-dim)">📷</div>
+          <div class="sys-name">Camera / YOLO</div>
+          <div class="sys-val"><span class="badge badge-grey" id="ss-camera">—</span></div>
+        </div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--bg3);color:var(--text-dim)">🔄</div>
+          <div class="sys-name">Firmware</div>
+          <div class="sys-val" style="font-size:11px;color:var(--text-muted)" id="ss-fw">—</div>
+        </div>
+      </div>
+
+      <!-- Distance chart -->
+      <div class="card" style="display:flex;flex-direction:column">
+        <div class="card-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          US Distance History
+        </div>
+        <div style="flex:1;min-height:180px;position:relative">
+          <canvas id="distChart"></canvas>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:16px;font-size:11px;color:var(--text-dim)">
+          <span>Danger: <span class="text-red fw700">≤50cm</span></span>
+          <span>Caution: <span class="text-amber fw700">50–100cm</span></span>
+          <span>Safe: <span class="text-green fw700">&gt;100cm</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== HARDWARE TESTING PAGE =================== -->
+  <div class="page" id="page-hardware">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Hardware Tests</div>
+        <div class="page-subtitle">Direct component control — requires DIAG mode + ESP32 connected</div>
+      </div>
+    </div>
+
+    <!-- Mode panel -->
+    <div class="mode-panel">
+      <div class="mode-label">Operating Mode</div>
+      <div class="mode-value" id="hwModeLabel">AUTO</div>
+      <button class="btn btn-amber" onclick="setDiagMode()" id="enterDiagBtn">Enter DIAG Mode</button>
+      <button class="btn btn-green" onclick="setAutoMode()" id="enterAutoBtn" style="display:none">Exit to AUTO Mode</button>
+      <button class="btn btn-ghost" onclick="resetLatch()" id="resetLatchBtn">Reset E-STOP Latch</button>
+    </div>
+
+    <div class="grid-2">
+      <!-- LED Tests -->
+      <div class="card">
+        <div class="card-title">💡 LED — GPIO 23</div>
+        <div class="test-btn-group">
+          <button class="test-btn" id="btn-led-on" onclick="testLED('ON')">
+            <span class="tb-icon">🔆</span>LED ON
+            <span class="tb-status" id="stat-led-on">—</span>
+          </button>
+          <button class="test-btn" id="btn-led-off" onclick="testLED('OFF')">
+            <span class="tb-icon">🔅</span>LED OFF
+            <span class="tb-status" id="stat-led-off">—</span>
+          </button>
+          <button class="test-btn" id="btn-led-blink" onclick="testLED('BLINK')">
+            <span class="tb-icon">✨</span>LED Blink
+            <span class="tb-status" id="stat-led-blink">—</span>
+          </button>
+        </div>
+        <div class="mt16 flex-center gap8" style="font-size:12px;color:var(--text-dim)">
+          <span>Current state:</span>
+          <span class="badge" id="led-state-badge">UNKNOWN</span>
+        </div>
+      </div>
+
+      <!-- Buzzer Tests -->
+      <div class="card">
+        <div class="card-title">🔊 Buzzer — GPIO 22</div>
+        <div class="test-btn-group">
+          <button class="test-btn" id="btn-buz-on" onclick="testBuzzer('ON')">
+            <span class="tb-icon">🔊</span>BUZ ON
+            <span class="tb-status" id="stat-buz-on">—</span>
+          </button>
+          <button class="test-btn" id="btn-buz-off" onclick="testBuzzer('OFF')">
+            <span class="tb-icon">🔇</span>BUZ OFF
+            <span class="tb-status" id="stat-buz-off">—</span>
+          </button>
+          <button class="test-btn" id="btn-buz-beep" onclick="testBuzzer('BEEP')">
+            <span class="tb-icon">📯</span>Beep
+            <span class="tb-status" id="stat-buz-beep">—</span>
+          </button>
+        </div>
+        <div class="mt16 flex-center gap8" style="font-size:12px;color:var(--text-dim)">
+          <span>Current state:</span>
+          <span class="badge" id="buz-state-badge">UNKNOWN</span>
+        </div>
+      </div>
+
+      <!-- Ultrasonic -->
+      <div class="card">
+        <div class="card-title">📏 Ultrasonic — HC-SR04 (TRIG:5 ECHO:18)</div>
+        <div style="display:flex;gap:24px;align-items:center;margin-bottom:12px">
+          <div>
+            <div class="text-xs text-dim mb8">RAW</div>
+            <div style="font-size:28px;font-weight:800;color:var(--cyan)"><span id="hw-us-raw">—</span><span style="font-size:14px;color:var(--text-dim)">cm</span></div>
+          </div>
+          <div>
+            <div class="text-xs text-dim mb8">CALIBRATED</div>
+            <div style="font-size:28px;font-weight:800;color:var(--green)"><span id="hw-us-cal">—</span><span style="font-size:14px;color:var(--text-dim)">cm</span></div>
+          </div>
+          <div>
+            <div class="text-xs text-dim mb8">STATUS</div>
+            <div class="badge badge-grey" id="hw-us-st">—</div>
+          </div>
+        </div>
+        <div style="background:var(--bg3);border-radius:var(--radius-sm);height:6px;overflow:hidden;margin-bottom:8px">
+          <div id="hw-us-bar" style="height:100%;background:linear-gradient(90deg,var(--green),var(--amber),var(--red));width:0%;transition:width 0.4s;border-radius:inherit"></div>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted)">0cm ←→ 200cm  |  Danger threshold: 50cm</div>
+      </div>
+
+      <!-- Motor Tests -->
+      <div class="card">
+        <div class="card-title">⚙️ Motors — TB6612FNG (MOTOR_OUTPUTS_ENABLED must be true)</div>
+
+        <div class="pwm-row">
+          <label>Test PWM</label>
+          <input type="range" class="pwm-slider" id="hwPwmSlider" min="0" max="100" value="20"
+                 oninput="updatePwmDisplay(this.value)" style="--pct:20%"/>
+          <span class="pwm-val" id="hwPwmVal">20%</span>
+        </div>
+
+        <div class="test-btn-group">
+          <button class="test-btn" id="btn-motor-a" onclick="testMotor('A')">
+            <span class="tb-icon">🔵</span>Ch A (Left)
+            <span class="tb-status" id="stat-motor-a">—</span>
+          </button>
+          <button class="test-btn" id="btn-motor-b" onclick="testMotor('B')">
+            <span class="tb-icon">🔴</span>Ch B (Right)
+            <span class="tb-status" id="stat-motor-b">—</span>
+          </button>
+          <button class="test-btn" id="btn-motor-both" onclick="testMotor('BOTH')">
+            <span class="tb-icon">⚡</span>Both Ch
+            <span class="tb-status" id="stat-motor-both">—</span>
+          </button>
+          <button class="test-btn" onclick="stopMotors()" style="border-color:var(--red);color:var(--red)">
+            <span class="tb-icon">⛔</span>STOP
+            <span class="tb-status">—</span>
+          </button>
+        </div>
+
+        <div class="mt16" style="font-size:11px;color:var(--red);line-height:1.6">
+          ⚠ Motors require: DIAG mode active + MOTOR_OUTPUTS_ENABLED=true in firmware + wheels raised.<br>
+          Auto-stop after 5s (firmware-enforced).
+        </div>
+
+        <div class="flex-center gap8 mt16">
+          <span style="font-size:12px;color:var(--text-dim)">Motor outputs:</span>
+          <span class="badge badge-red" id="moe-badge">DISABLED in firmware</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== CAMERA & YOLO PAGE =================== -->
+  <div class="page" id="page-camera">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Camera & YOLO</div>
+        <div class="page-subtitle">YOLOv8n pedestrian detection pipeline</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">📷 Camera Feed</div>
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);
+                    height:280px;display:flex;align-items:center;justify-content:center;
+                    color:var(--text-muted);font-size:13px;text-align:center;padding:20px">
+          <div>
+            <div style="font-size:40px;margin-bottom:12px">📷</div>
+            Live MJPEG feed not yet connected.<br>
+            <span class="text-xs text-dim">Configure Pi camera in Settings or run<br><code style="color:var(--cyan)">pi_controller.py --stream</code></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎯 Detection Results</div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--cyan-dim);color:var(--cyan)">🧑</div>
+          <div class="sys-name">Pedestrian Detected</div>
+          <div class="sys-val"><span class="badge badge-grey" id="cam-ped">NO DATA</span></div>
+        </div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--green-dim);color:var(--green)">📊</div>
+          <div class="sys-name">Confidence</div>
+          <div class="sys-val" id="cam-conf" style="font-weight:800;color:var(--green)">—</div>
+        </div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--amber-dim);color:var(--amber)">📏</div>
+          <div class="sys-name">Estimated Distance</div>
+          <div class="sys-val" id="cam-dist" style="font-weight:800;color:var(--amber)">—</div>
+        </div>
+        <div class="sys-row">
+          <div class="sys-icon" style="background:var(--red-dim);color:var(--red)">🔄</div>
+          <div class="sys-name">Messages Received</div>
+          <div class="sys-val" id="cam-seq" style="font-weight:800;color:var(--text)">0</div>
+        </div>
+        <div class="divider"></div>
+        <div class="card-title" style="margin-bottom:12px">Pipeline</div>
+        <div style="font-size:12px;color:var(--text-dim);line-height:2">
+          Camera → YOLOv8n → Distance Estimator → Zone Classifier → UART JSON → ESP32 FSM
+        </div>
+        <div class="mt16">
+          <div class="text-xs text-dim mb8">YOLO Model</div>
+          <code style="color:var(--cyan);font-size:12px">models/yolov8n.onnx (Ultralytics)</code>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== SAFETY SYSTEM PAGE =================== -->
+  <div class="page" id="page-safety">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Safety System</div>
+        <div class="page-subtitle">FSM states, pipeline health, and threshold configuration</div>
+      </div>
+    </div>
+
+    <!-- Pipeline visualization -->
+    <div class="card mb24">
+      <div class="card-title">🔄 Processing Pipeline</div>
+      <div class="pipeline-row">
+        <div class="pipe-step" id="pipe-camera">
+          <div class="pipe-icon">📷</div>
+          <div class="pipe-label">CAMERA</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" id="pipe-yolo">
+          <div class="pipe-icon">🎯</div>
+          <div class="pipe-label">YOLO</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" id="pipe-dist">
+          <div class="pipe-icon">📏</div>
+          <div class="pipe-label">DISTANCE</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" id="pipe-zone">
+          <div class="pipe-icon">🗺</div>
+          <div class="pipe-label">ZONE</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" id="pipe-uart">
+          <div class="pipe-icon">📡</div>
+          <div class="pipe-label">UART JSON</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" id="pipe-fsm">
+          <div class="pipe-icon">🧠</div>
+          <div class="pipe-label">ESP32 FSM</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step" id="pipe-motors">
+          <div class="pipe-icon">⚙️</div>
+          <div class="pipe-label">MOTORS</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FSM State -->
+    <div class="card mb24">
+      <div class="card-title">🧠 ESP32 Safety FSM</div>
+      <div class="fsm-grid">
+        <div class="fsm-state" id="fsm-BOOT_STOPPED"><div class="fsm-state-icon">🥾</div><div class="fsm-state-label">BOOT STOPPED</div></div>
+        <div class="fsm-state" id="fsm-FAR"><div class="fsm-state-icon">🟢</div><div class="fsm-state-label">FAR (Cruise)</div></div>
+        <div class="fsm-state" id="fsm-CAUTION"><div class="fsm-state-icon">🟡</div><div class="fsm-state-label">CAUTION (Slow)</div></div>
+        <div class="fsm-state" id="fsm-DANGER_LATCHED"><div class="fsm-state-icon">🔴</div><div class="fsm-state-label">DANGER LATCHED</div></div>
+        <div class="fsm-state" id="fsm-COMM_FAULT"><div class="fsm-state-icon">📵</div><div class="fsm-state-label">COMM FAULT</div></div>
+      </div>
+    </div>
+
+    <!-- Safety thresholds -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">⚙️ Safety Thresholds</div>
+        <div class="sys-row"><div class="sys-name">US Danger Threshold</div><div class="sys-val text-red fw700">50 cm</div></div>
+        <div class="sys-row"><div class="sys-name">Recovery Clear Time</div><div class="sys-val text-green fw700">2000 ms</div></div>
+        <div class="sys-row"><div class="sys-name">Pi Heartbeat Timeout</div><div class="sys-val text-amber fw700">300 ms</div></div>
+        <div class="sys-row"><div class="sys-name">US Sample Rate</div><div class="sys-val text-cyan fw700">20 Hz (50ms)</div></div>
+        <div class="sys-row"><div class="sys-name">Motor Test Timeout</div><div class="sys-val text-cyan fw700">5000 ms</div></div>
+        <div class="sys-row"><div class="sys-name">US Calibration</div><div class="sys-val text-cyan fw700">8-point piecewise</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">📡 GPIO Assignment</div>
+        <div class="sys-row"><div class="sys-name">PWMA</div><div class="sys-val text-cyan">GPIO 25</div></div>
+        <div class="sys-row"><div class="sys-name">AIN1 / AIN2</div><div class="sys-val text-cyan">GPIO 26 / 27</div></div>
+        <div class="sys-row"><div class="sys-name">PWMB</div><div class="sys-val text-cyan">GPIO 33</div></div>
+        <div class="sys-row"><div class="sys-name">BIN1 / BIN2</div><div class="sys-val text-cyan">GPIO 32 / 19</div></div>
+        <div class="sys-row"><div class="sys-name">US TRIG / ECHO</div><div class="sys-val text-cyan">GPIO 5 / 18</div></div>
+        <div class="sys-row"><div class="sys-name">LED / Buzzer</div><div class="sys-val text-cyan">GPIO 23 / 22</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== ZONE INJECTION PAGE =================== -->
+  <div class="page" id="page-zones">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Zone Injection</div>
+        <div class="page-subtitle">Simulate Pi messages to test ESP32 safety response</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">📡 Send Single Zone Message</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+          <button class="btn btn-green" onclick="sendZone('FAR',2.5,0.95,false)" style="padding:16px">🟢 FAR</button>
+          <button class="btn btn-amber" onclick="sendZone('CAUTION',1.2,0.90,true)" style="padding:16px">🟡 CAUTION</button>
+          <button class="btn btn-red" onclick="sendZone('DANGER',0.5,0.98,true)" style="padding:16px;grid-column:span 2">🔴 DANGER (Latch)</button>
+        </div>
+
+        <div class="card-title">🔄 Continuous Heartbeat</div>
+        <div style="display:flex;gap:10px;margin-bottom:12px">
+          <button class="btn btn-green" onclick="startHB('FAR',2.5,0.95,false)">HB FAR</button>
+          <button class="btn btn-amber" onclick="startHB('CAUTION',1.2,0.90,true)">HB CAUTION</button>
+          <button class="btn btn-ghost" onclick="stopHB()">Stop HB</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-dim)">
+          Heartbeat active: <span id="hb-status" class="text-dim">No</span> |
+          Zone: <span id="hb-zone" class="text-cyan">—</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎭 Scenario Runner</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-ghost" onclick="runScenario('demo')">Demo (auto cycle FAR→CAUTION→DANGER)</button>
+          <button class="btn btn-ghost" onclick="runScenario('watchdog')">Watchdog test (stop HB, verify fault)</button>
+          <button class="btn btn-ghost" onclick="runScenario('recovery')">Recovery test (DANGER → 2s clear → FAR)</button>
+          <button class="btn btn-ghost" onclick="runScenario('stress')">Stress test (rapid zone changes)</button>
+        </div>
+        <div class="mt16">
+          <button class="btn btn-cyan" onclick="runPytest()" style="width:100%">▶ Run Python Test Suite (pytest)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== SERIAL MONITOR PAGE =================== -->
+  <div class="page" id="page-serial">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Serial Monitor</div>
+        <div class="page-subtitle">Real-time ESP32 serial output — 115200 baud</div>
+      </div>
+    </div>
+
+    <div class="log-toolbar">
+      <div class="log-filter">
+        <span class="chip active" data-filter="ALL" onclick="setFilter('ALL',this)">ALL</span>
+        <span class="chip" data-filter="[US]" onclick="setFilter('[US]',this)">[US] Ultrasonic</span>
+        <span class="chip" data-filter="[RX]" onclick="setFilter('[RX]',this)">[RX] Pi Messages</span>
+        <span class="chip" data-filter="[CMD]" onclick="setFilter('[CMD]',this)">[CMD] Commands</span>
+        <span class="chip" data-filter="ACK" onclick="setFilter('ACK',this)">ACK/NACK</span>
+        <span class="chip" data-filter="STATUS" onclick="setFilter('STATUS',this)">STATUS</span>
+        <span class="chip" data-filter="[ERR]" onclick="setFilter('[ERR]',this)">Errors</span>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost" onclick="clearLog()">Clear</button>
+      <button class="btn btn-ghost" id="autoScrollBtn" onclick="toggleAutoScroll()" style="color:var(--cyan)">↓ Auto</button>
+    </div>
+
+    <div class="log-box" id="logBox"></div>
+
+    <!-- Manual send -->
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <input id="manualCmd" type="text" placeholder="Type command (e.g. GET_STATUS, LED_ON, SET_MODE:DIAG)..."
+             style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);
+                    padding:8px 14px;border-radius:var(--radius-sm);font-size:13px;outline:none"
+             onkeydown="if(event.key==='Enter')sendManual()"
+             onfocus="this.style.borderColor='var(--cyan)'" onblur="this.style.borderColor='var(--border)'"/>
+      <button class="btn btn-cyan" onclick="sendManual()">Send</button>
+    </div>
+    <div style="margin-top:8px;font-size:11px;color:var(--text-muted)">
+      Commands: GET_STATUS · GET_CAPABILITIES · LED_ON · LED_OFF · BUZZER_BEEP · SET_MODE:DIAG · SET_MODE:AUTO · EMERGENCY_STOP · RESET_LATCH
+    </div>
+  </div>
+
+  <!-- =================== TEST REPORTS PAGE =================== -->
+  <div class="page" id="page-reports">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Test Reports</div>
+        <div class="page-subtitle">Hardware and software test results</div>
+      </div>
+      <button class="btn btn-ghost" style="margin-left:auto" onclick="clearHwResults()">Clear Results</button>
+      <button class="btn btn-cyan" onclick="exportJSON()">↓ Export JSON</button>
+    </div>
+
+    <div class="card mb24">
+      <div class="card-title">▶ Test Output</div>
+      <div class="test-output-box" id="testOutputBox">
+        <div style="color:var(--text-muted);text-align:center;padding:40px 0">
+          No test running. Use Zone Injection → Run pytest or run a hardware test.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📋 Hardware Test Log</div>
+      <div id="hwResultsList" style="min-height:80px">
+        <div style="color:var(--text-muted);text-align:center;padding:24px;font-size:13px">
+          No results yet. Run hardware tests from the Hardware Tests page.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== SETTINGS PAGE =================== -->
+  <div class="page" id="page-settings">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Settings</div>
+        <div class="page-subtitle">Runtime configuration — changes apply immediately</div>
+      </div>
+      <button class="btn btn-ghost" style="margin-left:auto" onclick="resetSettings()">Reset Defaults</button>
+      <button class="btn btn-cyan" onclick="saveSettings()">Save Settings</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🎯 Detection Thresholds</div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">Confidence Threshold</div>
+          <div class="setting-desc">Minimum YOLO detection confidence (0.0–1.0)</div>
+        </div>
+        <div class="setting-ctrl">
+          <input type="number" id="set-confidence" min="0" max="1" step="0.05" value="0.5"/>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">Ultrasonic Danger Threshold</div>
+          <div class="setting-desc">Emergency brake distance in centimetres (default: 50cm)</div>
+        </div>
+        <div class="setting-ctrl">
+          <input type="number" id="set-us-threshold" min="10" max="200" step="5" value="50"/>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt16">
+      <div class="card-title">⚙️ Motor Speed Profiles</div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">Slow Speed</div>
+          <div class="setting-desc">Motor test slow speed percentage</div>
+        </div>
+        <div class="setting-ctrl">
+          <input type="number" id="set-slow" min="5" max="100" step="5" value="20"/>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">Medium Speed</div>
+          <div class="setting-desc">Motor test medium speed percentage</div>
+        </div>
+        <div class="setting-ctrl">
+          <input type="number" id="set-medium" min="5" max="100" step="5" value="40"/>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-name">Fast Speed</div>
+          <div class="setting-desc">Motor test fast speed percentage</div>
+        </div>
+        <div class="setting-ctrl">
+          <input type="number" id="set-fast" min="5" max="100" step="5" value="60"/>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt16">
+      <div class="card-title">ℹ️ Firmware Info</div>
+      <div class="sys-row"><div class="sys-name">Active Firmware</div><div class="sys-val" id="fw-name">pdv_unified.ino</div></div>
+      <div class="sys-row"><div class="sys-name">Serial Port</div><div class="sys-val" id="fw-port">/dev/cu.usbserial-0001</div></div>
+      <div class="sys-row"><div class="sys-name">Baud Rate</div><div class="sys-val">115200</div></div>
+      <div class="sys-row"><div class="sys-name">LED GPIO</div><div class="sys-val text-cyan">23 (confirmed)</div></div>
+      <div class="sys-row"><div class="sys-name">Buzzer GPIO</div><div class="sys-val text-cyan">22</div></div>
+      <div class="sys-row"><div class="sys-name">STBY</div><div class="sys-val text-dim">3V3 hardware tie (not GPIO)</div></div>
+      <div class="mt16 text-xs text-dim">
+        Upload: <code style="color:var(--cyan)">firmware/esp32/pdv_unified/pdv_unified.ino</code> via Arduino IDE 2.x<br>
+        Tools → Board: ESP32 Dev Module | Port: /dev/cu.usbserial-0001 | Speed: 921600
+      </div>
+    </div>
+  </div>
+
+</main>
+</div><!-- .layout -->
+
+<!-- ================================================================
+     MOTOR CONFIRM MODAL
+     ================================================================ -->
+<div class="modal-overlay" id="motorModal">
+  <div class="modal">
+    <div class="modal-title">⚠️ Motor Test Safety Check</div>
+    <div class="modal-body">
+      Before running motor tests:<br><br>
+      ✅ Wheels must be <strong>raised off the ground</strong><br>
+      ✅ DIAG mode must be active<br>
+      ✅ MOTOR_OUTPUTS_ENABLED=true in firmware<br>
+      ✅ Motor battery connected and fused<br><br>
+      Motors will auto-stop after <strong>5 seconds</strong> (firmware-enforced).
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeMotorModal()">Cancel</button>
+      <button class="btn btn-amber" id="confirmMotorBtn">Confirm & Run</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast stack -->
+<div id="toast-stack"></div>
+
+<!-- ================================================================
+     JAVASCRIPT
+     ================================================================ -->
+<script>
+const socket = io();
+
+// ================================================================
+// APP STATE
+// ================================================================
+const APP = {
+  status: {},
+  caps: {},
+  settings: {},
+  hwResults: {},
+  logFilter: 'ALL',
+  autoScroll: true,
+  logLines: [],
+  maxLog: 1000,
+  pendingMotorFn: null,
+  chartData: { labels: [], values: [] },
+  chart: null,
+};
+
+// ================================================================
+// NAVIGATION
+// ================================================================
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name)?.classList.add('active');
+  document.querySelector(`[data-page="${name}"]`)?.classList.add('active');
+}
+
+// ================================================================
+// SERIAL CONNECTION
+// ================================================================
+function connectSerial() {
+  const port = document.getElementById('portSelect').value;
+  const baud = document.getElementById('baudSelect').value;
+  socket.emit('connect_serial', { port, baud });
+  loadPorts();
+}
+
+function disconnectSerial() {
+  socket.emit('disconnect_serial');
+}
+
+function loadPorts() {
+  socket.emit('list_ports');
+}
+
+socket.on('ports', data => {
+  const sel = document.getElementById('portSelect');
+  const cur = sel.value;
+  sel.innerHTML = '';
+
+  const ports = data.ports || [];
+  if (ports.length === 0) {
+    sel.innerHTML = '<option value="">No ports found (Click ↻ to rescan)</option>';
+    return;
+  }
+
+  sel.innerHTML = '<option value="">— Select Port —</option>';
+  let autoSelected = false;
+
+  ports.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.port;
+    const isUsb = (p.port + ' ' + (p.desc || '')).toLowerCase().includes('usb') ||
+                  (p.desc || '').toLowerCase().includes('cp21') ||
+                  (p.desc || '').toLowerCase().includes('ch34');
+    opt.textContent = `${isUsb ? '★ ' : ''}${p.port}${p.desc && p.desc !== 'n/a' ? ' (' + p.desc + ')' : ''}`;
+
+    if (p.port === cur) {
+      opt.selected = true;
+      autoSelected = true;
+    } else if (!autoSelected && isUsb && !cur) {
+      opt.selected = true;
+      autoSelected = true;
+    }
+    sel.appendChild(opt);
+  });
+
+  if (ports.length > 0) {
+    showToast(`Found ${ports.length} port(s)`, 'info');
+  }
+});
+
+// ================================================================
+// STATUS & CAPS UPDATES
+// ================================================================
+socket.on('status_update', data => {
+  APP.status = data;
+  renderStatus(data);
+});
+
+socket.on('caps_update', data => {
+  APP.caps = data;
+  renderCaps(data);
+});
+
+function renderStatus(s) {
+  // Connection state
+  const connected = s.connected;
+  document.getElementById('connectBtn').disabled    = connected;
+  document.getElementById('disconnectBtn').disabled = !connected;
+
+  // Top pill
+  const dot  = document.getElementById('esp32Dot');
+  const ptxt = document.getElementById('esp32PillText');
+  const state = s.esp32_state || 'DISCONNECTED';
+  if (!connected)              { dot.className='dot';          ptxt.textContent='ESP32 Disconnected'; }
+  else if (state==='FAR')      { dot.className='dot green';    ptxt.textContent='ESP32 · FAR'; }
+  else if (state==='CAUTION')  { dot.className='dot amber pulse'; ptxt.textContent='ESP32 · CAUTION'; }
+  else if (state==='DANGER_LATCHED') { dot.className='dot red pulse'; ptxt.textContent='ESP32 · DANGER'; }
+  else if (state==='COMM_FAULT')     { dot.className='dot red';  ptxt.textContent='COMM FAULT'; }
+  else if (state==='DIAG')     { dot.className='dot amber';    ptxt.textContent='ESP32 · DIAG'; }
+  else                         { dot.className='dot cyan pulse'; ptxt.textContent='ESP32 · ' + state; }
+
+  // Mode pill
+  const mode = s.esp32_mode || 'AUTO';
+  document.getElementById('modePillText').textContent = mode;
+
+  // KPIs
+  document.getElementById('kpi-state').textContent = state;
+  document.getElementById('kpi-mode').textContent  = 'Mode: ' + mode;
+  document.getElementById('kpi-us').textContent    = s.us_cal != null ? s.us_cal.toFixed(1) : '—';
+  document.getElementById('kpi-us-status').textContent = 'Status: ' + (s.us_status || '—');
+  document.getElementById('kpi-conf').textContent  = s.confidence ? (s.confidence * 100).toFixed(0) : '—';
+  document.getElementById('kpi-ped').textContent   = 'Pedestrian: ' + (s.pedestrian ? 'YES' : 'NO');
+  document.getElementById('kpi-zone').textContent  = s.zone || 'UNKNOWN';
+  document.getElementById('kpi-dist').textContent  = s.distance_m != null ? `Distance: ${s.distance_m.toFixed(2)}m` : 'Distance: —';
+
+  // Zone badge
+  const zb = document.getElementById('zoneBadge');
+  const zone = (s.zone || '').toLowerCase();
+  zb.className = 'zone-badge ' + (zone || 'unknown');
+  zb.textContent = s.zone || 'NO DATA';
+
+  // Proximity rings
+  ['danger','caution','safe'].forEach(r => document.getElementById('ring-'+r).classList.remove('active'));
+  if (zone==='danger')       document.getElementById('ring-danger').classList.add('active');
+  else if (zone==='caution') { document.getElementById('ring-caution').classList.add('active'); document.getElementById('ring-safe').classList.add('active'); }
+  else if (zone==='far')     { document.getElementById('ring-safe').classList.add('active'); }
+
+  // LED indicator on SVG
+  const ledEl = document.getElementById('led-ind');
+  if (ledEl) {
+    ledEl.style.fill = s.led_on ? 'var(--green)' : 'var(--bg3)';
+    ledEl.style.filter = s.led_on ? 'drop-shadow(0 0 4px var(--green))' : '';
+  }
+
+  // Motor bars
+  const motorPct = s.motor_pwm_pct || 0;
+  document.getElementById('motorFillA').style.width = motorPct + '%';
+  document.getElementById('motorFillB').style.width = motorPct + '%';
+  document.getElementById('motorPctA').textContent  = motorPct + '%';
+  document.getElementById('motorPctB').textContent  = motorPct + '%';
+
+  // Subsystem badges
+  setBadge('ss-esp32', connected ? 'CONN' : 'DISC', connected ? 'green' : 'grey');
+  setBadge('ss-led', s.led_on ? 'ON' : 'OFF', s.led_on ? 'green' : 'grey');
+  setBadge('ss-buzzer', s.buzzer_on ? 'ON' : 'OFF', s.buzzer_on ? 'amber' : 'grey');
+  setBadge('ss-motors', s.motor_outputs_enabled ? 'ENABLED' : 'LOCKED', s.motor_outputs_enabled ? 'amber' : 'red');
+  setBadge('ss-us', s.us_status || '—', s.us_status === 'OK' ? 'green' : s.us_status === 'TIMEOUT' ? 'red' : 'amber');
+  document.getElementById('ss-fw').textContent = s.firmware || '—';
+
+  // Hardware page LED/buzzer state badges
+  updateLedBadge(s.led_on);
+  updateBuzzerBadge(s.buzzer_on);
+
+  // Hardware page US display
+  if (s.us_raw != null)   document.getElementById('hw-us-raw').textContent = s.us_raw;
+  if (s.us_cal != null) {
+    document.getElementById('hw-us-cal').textContent = s.us_cal;
+    const pct = Math.min(100, (s.us_cal / 200) * 100);
+    document.getElementById('hw-us-bar').style.width = pct + '%';
+  }
+  if (s.us_status) {
+    const st = document.getElementById('hw-us-st');
+    st.textContent = s.us_status;
+    st.className = 'badge ' + (s.us_status==='OK'?'badge-green': s.us_status.includes('ABOVE')?'badge-grey':'badge-red');
+  }
+
+  // Camera page
+  if (s.pedestrian != null) setBadge('cam-ped', s.pedestrian ? 'YES' : 'NO', s.pedestrian ? 'red' : 'green');
+  if (s.confidence != null) document.getElementById('cam-conf').textContent = (s.confidence*100).toFixed(1) + '%';
+  if (s.distance_m != null) document.getElementById('cam-dist').textContent = s.distance_m.toFixed(2) + ' m';
+  document.getElementById('cam-seq').textContent = s.seq_rx || 0;
+
+  // HB status
+  document.getElementById('hb-status').textContent = s.hb_active ? 'YES' : 'No';
+  document.getElementById('hb-zone').textContent   = s.hb_zone || '—';
+
+  // Safety page FSM
+  const fsmStates = ['BOOT_STOPPED','FAR','CAUTION','DANGER_LATCHED','COMM_FAULT','DIAG'];
+  fsmStates.forEach(fs => {
+    const el = document.getElementById('fsm-' + fs);
+    if (!el) return;
+    el.className = 'fsm-state';
+    if (fs === state) {
+      const cls = {BOOT_STOPPED:'boot',FAR:'far',CAUTION:'caution',DANGER_LATCHED:'danger',COMM_FAULT:'fault',DIAG:'diag'}[fs];
+      el.className = 'fsm-state current ' + (cls||'');
+    }
+  });
+
+  // Pipeline step colors
+  const pipeOk = s.seq_rx > 0;
+  if (pipeOk) {
+    ['pipe-camera','pipe-yolo','pipe-dist','pipe-zone','pipe-uart'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.className = 'pipe-step ok';
+    });
+  }
+  const fsmEl = document.getElementById('pipe-fsm');
+  if (fsmEl) fsmEl.className = 'pipe-step ' + (zone==='far'?'ok':zone==='caution'?'warn':zone==='danger'?'danger':'active');
+  const motEl = document.getElementById('pipe-motors');
+  if (motEl) motEl.className = 'pipe-step ' + (zone==='far'?'ok':zone==='caution'?'warn':'danger');
+
+  // HW mode display
+  const hwMode = document.getElementById('hwModeLabel');
+  if (hwMode) {
+    hwMode.textContent = mode;
+    hwMode.className = 'mode-value mode-' + mode.toLowerCase();
+  }
+  const diagBtn = document.getElementById('enterDiagBtn');
+  const autoBtn = document.getElementById('enterAutoBtn');
+  if (diagBtn && autoBtn) {
+    if (mode === 'DIAG') { diagBtn.style.display='none'; autoBtn.style.display=''; }
+    else                  { diagBtn.style.display='';    autoBtn.style.display='none'; }
+  }
+
+  // MOE badge
+  const moe = document.getElementById('moe-badge');
+  if (moe) {
+    moe.textContent = s.motor_outputs_enabled ? 'ENABLED' : 'DISABLED in firmware';
+    moe.className   = 'badge ' + (s.motor_outputs_enabled ? 'badge-green' : 'badge-red');
+  }
+
+  // US chart
+  if (s.us_cal != null && s.us_cal < 999) {
+    const now = new Date().toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    APP.chartData.labels.push(now);
+    APP.chartData.values.push(s.us_cal);
+    if (APP.chartData.labels.length > 60) {
+      APP.chartData.labels.shift(); APP.chartData.values.shift();
+    }
+    updateChart();
+  }
+}
+
+function renderCaps(caps) {
+  // Enable/disable motor buttons based on caps
+  ['btn-motor-a','btn-motor-b','btn-motor-both'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !caps.motor;
+  });
+  setBadge('moe-badge', caps.motor ? 'ENABLED' : 'DISABLED in firmware', caps.motor ? 'green' : 'red');
+}
+
+function setBadge(id, text, color) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'badge badge-' + (color||'grey');
+}
+
+function updateLedBadge(on) {
+  const b = document.getElementById('led-state-badge');
+  if (!b) return;
+  b.textContent = on ? 'ON' : 'OFF';
+  b.className   = 'badge ' + (on ? 'badge-green' : 'badge-grey');
+}
+function updateBuzzerBadge(on) {
+  const b = document.getElementById('buz-state-badge');
+  if (!b) return;
+  b.textContent = on ? 'ON' : 'OFF';
+  b.className   = 'badge ' + (on ? 'badge-amber' : 'badge-grey');
+}
+
+// ================================================================
+// ACK / NACK / TIMEOUT
+// ================================================================
+socket.on('cmd_ack', data => {
+  const cmd = data.cmd || '';
+  const key = cmd.split(':')[0];
+  // Update visual states
+  if (key === 'LED_ON')    { setBtnResult('btn-led-on',  true);  document.getElementById('stat-led-on').textContent  = '✓ ACK'; }
+  if (key === 'LED_OFF')   { setBtnResult('btn-led-off', true);  document.getElementById('stat-led-off').textContent = '✓ ACK'; }
+  if (key === 'LED_BLINK') { setBtnResult('btn-led-blink', true); document.getElementById('stat-led-blink').textContent = '✓ ACK'; }
+  if (key === 'BUZZER_ON') { setBtnResult('btn-buz-on',  true);  document.getElementById('stat-buz-on').textContent  = '✓ ACK'; }
+  if (key === 'BUZZER_OFF'){ setBtnResult('btn-buz-off', true);  document.getElementById('stat-buz-off').textContent = '✓ ACK'; }
+  if (key === 'BUZZER_BEEP'){setBtnResult('btn-buz-beep',true);  document.getElementById('stat-buz-beep').textContent= '✓ ACK'; }
+  if (key === 'MOTOR_A_TEST') { setBtnResult('btn-motor-a',    true); document.getElementById('stat-motor-a').textContent    = '✓ ACK'; }
+  if (key === 'MOTOR_B_TEST') { setBtnResult('btn-motor-b',    true); document.getElementById('stat-motor-b').textContent    = '✓ ACK'; }
+  if (key === 'MOTOR_BOTH_TEST'){ setBtnResult('btn-motor-both', true); document.getElementById('stat-motor-both').textContent= '✓ ACK'; }
+  showToast('✓ ' + cmd, 'success');
+});
+
+socket.on('cmd_nack', data => {
+  const cmd = data.cmd || '';
+  const key = cmd.split(':')[0];
+  const reason = data.reason || 'NACK';
+  showToast('✗ ' + cmd + ': ' + reason, 'danger');
+  // Reset pending state on buttons
+  ['btn-led-on','btn-led-off','btn-led-blink','btn-buz-on','btn-buz-off','btn-buz-beep',
+   'btn-motor-a','btn-motor-b','btn-motor-both'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('pending');
+  });
+});
+
+socket.on('cmd_timeout', data => {
+  showToast('⏱ Timeout: ' + (data.cmd||''), 'warning');
+  ['btn-led-on','btn-led-off','btn-led-blink','btn-buz-on','btn-buz-off','btn-buz-beep',
+   'btn-motor-a','btn-motor-b','btn-motor-both'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('pending');
+  });
+});
+
+function setBtnResult(btnId, success) {
+  const el = document.getElementById(btnId);
+  if (!el) return;
+  el.classList.remove('pending');
+  el.style.borderColor = success ? 'var(--green)' : 'var(--red)';
+  setTimeout(() => { el.style.borderColor = ''; }, 2000);
+}
+
+// ================================================================
+// HARDWARE COMMANDS
+// ================================================================
+function checkConnected() {
+  if (!APP.status.connected) { showToast('Not connected to ESP32', 'warning'); return false; }
+  return true;
+}
+
+function testLED(state) {
+  if (!checkConnected()) return;
+  const id = {'ON':'btn-led-on','OFF':'btn-led-off','BLINK':'btn-led-blink'}[state];
+  document.getElementById(id)?.classList.add('pending');
+  socket.emit('led_cmd', { state });
+}
+
+function testBuzzer(pattern) {
+  if (!checkConnected()) return;
+  const id = {'ON':'btn-buz-on','OFF':'btn-buz-off','BEEP':'btn-buz-beep'}[pattern];
+  document.getElementById(id)?.classList.add('pending');
+  socket.emit('buzzer_cmd', { pattern });
+}
+
+let motorModalResolve = null;
+function testMotor(channel) {
+  if (!checkConnected()) return;
+  if (!APP.caps.motor) { showToast('Motor outputs disabled in firmware', 'warning'); return; }
+  if (APP.status.esp32_mode !== 'DIAG') { showToast('Enter DIAG mode first', 'warning'); return; }
+  APP.pendingMotorFn = () => {
+    const pct = parseInt(document.getElementById('hwPwmSlider').value);
+    const id = {A:'btn-motor-a',B:'btn-motor-b',BOTH:'btn-motor-both'}[channel];
+    document.getElementById(id)?.classList.add('pending');
+    socket.emit('motor_cmd', { channel, direction: 'FWD', pwm_pct: pct });
+  };
+  document.getElementById('motorModal').classList.add('open');
+  document.getElementById('confirmMotorBtn').onclick = () => {
+    document.getElementById('motorModal').classList.remove('open');
+    APP.pendingMotorFn && APP.pendingMotorFn();
+  };
+}
+
+function closeMotorModal() {
+  document.getElementById('motorModal').classList.remove('open');
+  APP.pendingMotorFn = null;
+}
+
+function stopMotors() {
+  if (!checkConnected()) return;
+  socket.emit('motor_cmd', { channel: 'A', direction: 'STOP', pwm_pct: 0 });
+  setBtnResult('btn-motor-a', false); setBtnResult('btn-motor-b', false); setBtnResult('btn-motor-both', false);
+}
+
+function emergencyStop() {
+  socket.emit('emergency_stop');
+  showToast('⛔ EMERGENCY STOP sent', 'danger');
+}
+
+function resetLatch() {
+  if (!checkConnected()) return;
+  socket.emit('reset_latch');
+}
+
+function setDiagMode() {
+  if (!checkConnected()) return;
+  socket.emit('set_mode', { mode: 'DIAG' });
+}
+function setAutoMode() {
+  if (!checkConnected()) return;
+  socket.emit('set_mode', { mode: 'AUTO' });
+}
+function toggleModePanel() {
+  const mode = APP.status.esp32_mode;
+  if (mode === 'DIAG') setAutoMode(); else setDiagMode();
+}
+
+function refreshStatus() {
+  socket.emit('get_status');
+  socket.emit('get_capabilities');
+}
+
+// ================================================================
+// ZONE INJECTION
+// ================================================================
+function sendZone(zone, dist, conf, ped) {
+  if (!checkConnected()) return;
+  socket.emit('send_zone', { zone, distance_m: dist, confidence: conf, pedestrian: ped });
+}
+function startHB(zone, dist, conf, ped) {
+  if (!checkConnected()) return;
+  socket.emit('start_heartbeat', { zone, distance_m: dist, confidence: conf, pedestrian: ped });
+}
+function stopHB() { socket.emit('stop_heartbeat'); }
+function runScenario(s) {
+  const port = document.getElementById('portSelect').value;
+  const baud = document.getElementById('baudSelect').value;
+  showPage('reports');
+  socket.emit('run_scenario', { scenario: s, port, baud });
+}
+function runPytest() {
+  showPage('reports');
+  socket.emit('run_pytest');
+}
+
+// ================================================================
+// SERIAL LOG
+// ================================================================
+socket.on('serial_line', data => {
+  const line = data.line || '';
+  const ts   = formatTs(data.ts || 0);
+  const tx   = data.tx === true;
+  APP.logLines.push({ line, ts, tx });
+  if (APP.logLines.length > APP.maxLog) APP.logLines.shift();
+  if (passesFilter(line)) {
+    appendLogLine(line, ts, tx);
+  }
+});
+
+function passesFilter(line) {
+  const f = APP.logFilter;
+  if (f === 'ALL') return true;
+  if (f === 'ACK') return line.startsWith('ACK:') || line.startsWith('NACK:');
+  if (f === 'STATUS') return line.startsWith('STATUS:');
+  if (f === '[ERR]') return line.startsWith('[ERR]') || line.startsWith('[READ ERROR]');
+  if (f === '[CMD]') return line.startsWith('[CMD]') || line.startsWith('[TX]');
+  return line.startsWith(f);
+}
+
+function getLineClass(line, tx) {
+  if (tx || line.startsWith('[CMD]') || line.startsWith('[TX]')) return 'tx';
+  if (line.startsWith('[US]'))    return 'us';
+  if (line.startsWith('[RX]'))    return 'rx';
+  if (line.startsWith('ACK:'))    return 'ack';
+  if (line.startsWith('NACK:'))   return 'nack';
+  if (line.startsWith('[ERR]'))   return 'err';
+  if (line.startsWith('STATUS:')) return 'status';
+  if (line.startsWith('CAPS:'))   return 'caps';
+  if (line.startsWith('[INFO]'))  return 'rx';
+  return 'info';
+}
+
+function appendLogLine(line, ts, tx) {
+  const box = document.getElementById('logBox');
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  div.innerHTML = `<span class="log-ts">${ts}</span><span class="log-txt ${getLineClass(line,tx)}">${escapeHtml(line)}</span>`;
+  box.appendChild(div);
+  if (APP.autoScroll) box.scrollTop = box.scrollHeight;
+  // Badge if on serial page — not needed but clear badge when viewing
+  if (document.getElementById('page-serial').classList.contains('active')) {
+    document.getElementById('serialBadge').style.display = 'none';
+  } else if (line.startsWith('[ERR]') || line.startsWith('NACK:')) {
+    document.getElementById('serialBadge').style.display = '';
+  }
+}
+
+function setFilter(f, el) {
+  APP.logFilter = f;
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  // Re-render
+  const box = document.getElementById('logBox');
+  box.innerHTML = '';
+  APP.logLines.filter(l => passesFilter(l.line)).forEach(l => appendLogLine(l.line, l.ts, l.tx));
+}
+
+function clearLog() {
+  APP.logLines = [];
+  document.getElementById('logBox').innerHTML = '';
+}
+
+function toggleAutoScroll() {
+  APP.autoScroll = !APP.autoScroll;
+  document.getElementById('autoScrollBtn').style.color = APP.autoScroll ? 'var(--cyan)' : 'var(--text-dim)';
+}
+
+function sendManual() {
+  const inp = document.getElementById('manualCmd');
+  const cmd = inp.value.trim();
+  if (!cmd) return;
+  if (!APP.status.connected) { showToast('Not connected', 'warning'); return; }
+  fetch('/api/raw_cmd', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd })
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) showToast('Send failed: ' + (d.error||''), 'danger');
+  }).catch(() => showToast('Send error', 'danger'));
+  inp.value = '';
+}
+
+// ================================================================
+// TEST OUTPUT
+// ================================================================
+socket.on('test_start', data => {
+  const box = document.getElementById('testOutputBox');
+  box.innerHTML = `<div style="color:var(--cyan);font-weight:700;margin-bottom:8px">▶ ${data.name}</div>`;
+  document.getElementById('page-reports').style.display = 'block';
+});
+socket.on('test_output', data => {
+  const box = document.getElementById('testOutputBox');
+  const line = data.line || '';
+  const div  = document.createElement('div');
+  div.className = 'test-line ' + (line.includes('PASSED')?'pass':line.includes('FAILED')?'fail':line.includes('ERROR')?'error':'');
+  div.textContent = line;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+});
+socket.on('test_done', data => {
+  const box = document.getElementById('testOutputBox');
+  const div = document.createElement('div');
+  div.style.marginTop = '12px';
+  div.style.fontWeight = '700';
+  div.style.color = data.exit_code === 0 ? 'var(--green)' : 'var(--red)';
+  div.textContent = data.exit_code === 0 ? '✓ All tests passed!' : `✗ Exit code: ${data.exit_code}`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  showToast(data.exit_code === 0 ? '✓ Tests passed!' : '✗ Tests failed', data.exit_code === 0 ? 'success' : 'danger');
+});
+
+// ================================================================
+// HARDWARE TEST RESULTS
+// ================================================================
+socket.on('hw_test_results_update', data => {
+  APP.hwResults = data;
+  renderHwResults(data);
+});
+function renderHwResults(data) {
+  const list = document.getElementById('hwResultsList');
+  const keys = Object.keys(data);
+  if (!keys.length) {
+    list.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:24px;font-size:13px">No results yet.</div>';
+    return;
+  }
+  list.innerHTML = keys.map(k => {
+    const r = data[k];
+    const col = r.status==='pass'?'green':r.status==='fail'?'red':'amber';
+    return `<div class="result-row">
+      <span class="badge badge-${col}">${r.status.toUpperCase()}</span>
+      <span style="flex:1;font-size:12px;font-weight:600">${k}</span>
+      <span style="font-size:11px;color:var(--text-muted)">${new Date(r.timestamp).toLocaleTimeString()}</span>
+    </div>`;
+  }).join('');
+}
+function clearHwResults() { socket.emit('clear_hw_results'); }
+function exportJSON() {
+  const blob = new Blob([JSON.stringify({results:APP.hwResults, status:APP.status, caps:APP.caps}, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'pdv_test_report_' + new Date().toISOString().replace(/[:T.]/g,'-').slice(0,16) + '.json';
+  a.click();
+}
+
+// ================================================================
+// SETTINGS
+// ================================================================
+socket.on('settings_data', data => {
+  APP.settings = data;
+  if (data.confidence_threshold != null)  document.getElementById('set-confidence').value = data.confidence_threshold;
+  if (data.us_danger_threshold_cm != null) document.getElementById('set-us-threshold').value = data.us_danger_threshold_cm;
+  if (data.motor_slow_pct != null)   document.getElementById('set-slow').value  = data.motor_slow_pct;
+  if (data.motor_medium_pct != null) document.getElementById('set-medium').value = data.motor_medium_pct;
+  if (data.motor_fast_pct != null)   document.getElementById('set-fast').value  = data.motor_fast_pct;
+});
+function saveSettings() {
+  socket.emit('update_settings', {
+    confidence_threshold:   parseFloat(document.getElementById('set-confidence').value),
+    us_danger_threshold_cm: parseInt(document.getElementById('set-us-threshold').value),
+    motor_slow_pct:         parseInt(document.getElementById('set-slow').value),
+    motor_medium_pct:       parseInt(document.getElementById('set-medium').value),
+    motor_fast_pct:         parseInt(document.getElementById('set-fast').value),
+  });
+}
+function resetSettings() { socket.emit('reset_settings'); }
+
+// ================================================================
+// TOAST
+// ================================================================
+function showToast(msg, level) {
+  const stack = document.getElementById('toast-stack');
+  const t = document.createElement('div');
+  t.className = 'toast ' + (level||'info');
+  t.textContent = msg;
+  stack.appendChild(t);
+  setTimeout(() => { t.style.opacity='0'; t.style.transition='opacity 0.3s'; setTimeout(()=>t.remove(),300); }, 3000);
+}
+socket.on('toast', data => showToast(data.msg, data.level));
+
+// ================================================================
+// DISTANCE CHART
+// ================================================================
+function initChart() {
+  const ctx = document.getElementById('distChart');
+  if (!ctx) return;
+  APP.chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'US Distance (cm)',
+        data: [],
+        borderColor: 'rgba(0,212,255,0.8)',
+        backgroundColor: 'rgba(0,212,255,0.08)',
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: true,
+        tension: 0.4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: {
+          min: 0, max: 200,
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#6b7fa3', font: { size: 10 }, callback: v => v + 'cm' }
+        }
+      }
+    }
+  });
+  // Danger line annotation
+  Chart.register({ id: 'dangerLine',
+    afterDraw(chart) {
+      const { ctx: c, chartArea: { left, right }, scales: { y } } = chart;
+      const yPx = y.getPixelForValue(50);
+      c.save(); c.beginPath();
+      c.moveTo(left, yPx); c.lineTo(right, yPx);
+      c.strokeStyle = 'rgba(255,61,113,0.5)'; c.lineWidth = 1; c.setLineDash([4,4]);
+      c.stroke(); c.restore();
+    }
+  });
+}
+function updateChart() {
+  if (!APP.chart) return;
+  APP.chart.data.labels   = APP.chartData.labels;
+  APP.chart.data.datasets[0].data = APP.chartData.values;
+  APP.chart.update('none');
+}
+
+// ================================================================
+// PWM SLIDER
+// ================================================================
+function updatePwmDisplay(val) {
+  document.getElementById('hwPwmVal').textContent = val + '%';
+  const slider = document.getElementById('hwPwmSlider');
+  slider.style.setProperty('--pct', val + '%');
+}
+
+// ================================================================
+// UTILS
+// ================================================================
+function formatTs(ms) {
+  const d = new Date();
+  return d.toLocaleTimeString('en', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ================================================================
+// INIT
+// ================================================================
+document.addEventListener('DOMContentLoaded', () => {
+  initChart();
+  loadPorts();
+  socket.emit('get_settings');
+  socket.emit('get_hw_results');
+
+  // Keyboard shortcut: Escape = close modal
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeMotorModal();
+    if (e.key === 'F5') refreshStatus();
+  });
+});
+</script>
+</body>
+</html>
