@@ -1,44 +1,54 @@
 # Physical Pin Mapping for ESP32 & Peripherals
-# Matches firmware/esp32/pedestrian_vehicle/pedestrian_vehicle.ino
+# Authoritative source — matches firmware/esp32/pedestrian_vehicle/pedestrian_vehicle.ino
+# See docs/GPIO_MAPPING.md for full wiring diagram and confirmation checklist.
 
 esp32:
-  # Primary UART (cross TX/RX with Raspberry Pi, common ground, 3.3V logic)
   uart:
-    rx_gpio: 3      # Standard RX0 (or GPIO 16 if using Serial2)
-    tx_gpio: 1      # Standard TX0 (or GPIO 17 if using Serial2)
+    rx_gpio: 3        # UART0 RX (GPIO3) — receives from Pi TX
+    tx_gpio: 1        # UART0 TX (GPIO1) — sends to Pi RX
     baud_rate: 115200
 
-  # HC-SR04 Ultrasonic Distance Sensor
   ultrasonic:
-    trig_gpio: 5    # Output trigger pulse to HC-SR04 TRIG (5V logic tolerant)
-    echo_gpio: 18   # Input from HC-SR04 ECHO (MUST pass through voltage divider / level shifter <= 3.3V!)
-    calibration:
-      slope: 0.9975
-      intercept_cm: 2.1117
+    trig_gpio: 5      # HC-SR04 TRIG output (5V-tolerant)
+    echo_gpio: 18     # HC-SR04 ECHO input (⚠️ CONFIRM — MUST use voltage divider, 5V→3.3V)
+    calibration_method: piecewise_linear
+    calibration_range_cm: [10, 75]
+    danger_threshold_cm: 50   # Conservative bench value — requires stopping-distance validation
+    points:
+      - { raw_cm:  8.08, actual_cm: 10.0 }
+      - { raw_cm: 18.76, actual_cm: 20.0 }
+      - { raw_cm: 27.68, actual_cm: 30.0 }
+      - { raw_cm: 37.47, actual_cm: 40.0 }
+      - { raw_cm: 47.20, actual_cm: 50.0 }
+      - { raw_cm: 57.56, actual_cm: 60.0 }
+      - { raw_cm: 68.74, actual_cm: 70.0 }
+      - { raw_cm: 73.45, actual_cm: 75.0 }
 
-  # Safety Indicators
   indicators:
-    status_led_gpio: 2    # Built-in or external Red LED (with current limiting resistor)
-    buzzer_gpio: 4        # Active 5V/3.3V Piezo Buzzer
+    status_led_gpio: 23       # CONFIRMED: GPIO23 (not the built-in LED on GPIO2)
+    buzzer_gpio: 22           # Confirmed: 3-pin active buzzer IO pin
+    buzzer_active_high: true  # Set false if buzzer sounds when IO is LOW
 
-  # TB6612FNG Dual H-Bridge Motor Driver
-  # Drive layout: 4 geared DC motors paired Left (A) and Right (B)
   motor_driver:
     chip: "TB6612FNG"
-    stby_gpio: 19   # Standby pin (HIGH = enabled, LOW = high impedance stop)
-    
-    # Left Motor Bank (Channel A)
-    ain1_gpio: 21   # Direction logic 1
-    ain2_gpio: 22   # Direction logic 2
-    pwma_gpio: 23   # PWM speed control
-    
-    # Right Motor Bank (Channel B)
-    bin1_gpio: 25   # Direction logic 1
-    bin2_gpio: 26   # Direction logic 2
-    pwmb_gpio: 27   # PWM speed control
+    stby: "HARDWARE_3V3_TIE"  # STBY is NOT a GPIO — permanently HIGH via 3V3 rail
+    # Channel A — Left bank (front-left + rear-left motors wired in parallel)
+    ain1_gpio: 26
+    ain2_gpio: 27
+    pwma_gpio: 25             # LEDC channel 0, 5 kHz, 8-bit
+    # Channel B — Right bank (front-right + rear-right motors wired in parallel)
+    bin1_gpio: 32
+    bin2_gpio: 19
+    pwmb_gpio: 33             # LEDC channel 1, 5 kHz, 8-bit
+    motor_outputs_enabled: false   # Must be true only after hardware validation
 
   speed_profiles:
     pwm_max: 255
-    pwm_cruise: 180      # FAR zone cruising speed
-    pwm_caution: 72      # CAUTION zone (40% of cruise speed)
-    pwm_danger: 0        # DANGER zone (emergency stop)
+    pwm_cruise: 180        # FAR zone (~70%)
+    pwm_caution: 72        # CAUTION zone (40% of cruise)
+    pwm_danger: 0          # DANGER / any stop state
+    pwm_very_slow: 51      # 20% — initial motor test
+    pwm_slow: 77           # 30%
+    pwm_medium: 128        # 50%
+    pwm_fast: 179          # 70%
+    pwm_max_test: 217      # 85% — only after lower-speed validation
