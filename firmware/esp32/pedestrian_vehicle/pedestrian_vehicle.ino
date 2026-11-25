@@ -1,144 +1,262 @@
 /*
- * ESP32 Production Firmware for Pedestrian Safety Vehicle
- * Features:
- *   - UART JSON protocol v1 parser with heartbeat watchdog (500 ms)
- *   - Calibrated HC-SR04 ultrasonic distance verification (actual = 0.9975 * sensor + 2.11 cm)
- *   - Autonomous safety trigger: ultrasonic < 1.0 m forces latched emergency stop
- *   - Dual-zone motor control for TB6612FNG / L298N (Cruise in FAR, 40% speed in CAUTION, 0% in DANGER)
- *   - 2-second continuous clear path required to recover from emergency stop
- *   - Audible and visual alert indicator patterns (Buzzer & LED)
+ * Pedestrian Safety Vehicle — ESP32 Production Firmware v2.0
+ * Hardware: ESP32 DevKit V1 + TB6612FNG + HC-SR04 + 3-pin Buzzer + LED
+ *
+ * WIRING (authoritative — see docs/GPIO_MAPPING.md):
+ *   PWMA  → GPIO25   AIN1 → GPIO26   AIN2 → GPIO27
+ *   PWMB  → GPIO33   BIN1 → GPIO32   BIN2 → GPIO19
+ *   STBY  → 3V3 rail (hardware tie — NOT software-controlled)
+ *   Buzzer IO → GPIO22
+ *   LED       → GPIO2  (⚠️ CONFIRM before use)
+ *   HC-SR04 TRIG → GPIO5   ECHO → GPIO18 (⚠️ CONFIRM; ECHO needs voltage divider)
+ *   UART RX0 → GPIO3   TX0 → GPIO1  (Pi UART — shared with USB Serial Monitor)
+ *
+ * Safety:
+ *   - Fail-stopped at boot — motors stay off until valid Pi messages arrive
+ *   - 300 ms heartbeat watchdog → COMM_FAULT + motor stop
+ *   - Piecewise-calibrated HC-SR04 near-field safety (10–75 cm range)
+ *   - Ultrasonic danger threshold: 50 cm (conservative bench value)
+ *   - DANGER_LATCHED: 2 s continuous clear path required to recover
+ *   - MOTOR_OUTPUTS_ENABLED = false by default
  */
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
 // ============================================================================
-// CONFIGURATION & PIN DEFINITIONS
-// Match with config/pins.yaml. Adjust to your physical wiring.
+// HARDWARE CONFIGURATION
 // ============================================================================
+
 static constexpr uint32_t SERIAL_BAUD = 115200;
-static constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 500;
-static constexpr uint32_t RECOVERY_CLEAR_MS = 2000;
-static constexpr uint32_t ULTRASONIC_INTERVAL_MS = 50; // Sample ultrasonic at 20 Hz
 
-// Safety threshold: 1.0 m (100 cm) is the DANGER boundary
-static constexpr float ULTRASONIC_DANGER_THRESHOLD_CM = 100.0f;
+// Motor Driver (TB6612FNG) — STBY is 3V3 hardware tie, NOT a GPIO
+static constexpr int PIN_PWMA = 25;   // Channel A PWM  (LEDC ch 0)
+static constexpr int PIN_AIN1 = 26;   // Channel A dir1
+static constexpr int PIN_AIN2 = 27;   // Channel A dir2
+static constexpr int PIN_PWMB = 33;   // Channel B PWM  (LEDC ch 1)
+static constexpr int PIN_BIN1 = 32;   // Channel B dir1
+static constexpr int PIN_BIN2 = 19;   // Channel B dir2
 
-// Calibration parameters from bench dataset:
-// actual_cm = (SLOPE * sensor_reading_cm) + INTERCEPT
-static constexpr float ULTRASONIC_SLOPE = 0.9975f;
-static constexpr float ULTRASONIC_INTERCEPT = 2.1117f;
+static constexpr int LEDC_CH_A     = 0;
+static constexpr int LEDC_CH_B     = 1;
+static constexpr int LEDC_FREQ_HZ  = 5000;
+static constexpr int LEDC_RES_BITS = 8;  // 0–255
 
-// Pin Definitions (Standard ESP32 WROOM default pinout)
-// Set to -1 if an individual pin is not connected.
-static constexpr int PIN_LED = 2;        // Status LED
-static constexpr int PIN_BUZZER = 4;     // Active buzzer
-static constexpr int PIN_TRIG = 5;       // HC-SR04 Trig (Output)
-static constexpr int PIN_ECHO = 18;      // HC-SR04 Echo (Input via voltage divider <= 3.3V!)
+// Indicators
+static constexpr int  PIN_LED    = 23;   // Status LED — CONFIRMED GPIO23
+static constexpr int  PIN_BUZZER = 22;   // Buzzer IO (3-pin module)
 
-// TB6612FNG Motor Driver Pins
-static constexpr int PIN_STBY = 19;      // TB6612FNG Standby (HIGH = active)
-static constexpr int PIN_AIN1 = 21;      // Left Motor Dir 1
-static constexpr int PIN_AIN2 = 22;      // Left Motor Dir 2
-static constexpr int PIN_PWMA = 23;      // Left Motor PWM Speed
-static constexpr int PIN_BIN1 = 25;      // Right Motor Dir 1
-static constexpr int PIN_BIN2 = 26;      // Right Motor Dir 2
-static constexpr int PIN_PWMB = 27;      // Right Motor PWM Speed
+// true  = buzzer on when IO HIGH (active-HIGH module)
+// false = buzzer on when IO LOW  (active-LOW  module)
+// Confirm polarity from module marking before power-on.
+static constexpr bool BUZZER_ACTIVE_HIGH = true;
 
-// Safety Switch: Set to true once verified on elevated wheels
-static constexpr bool MOTOR_OUTPUTS_ENABLED = true;
-
-// PWM Speed Levels (0 - 255)
-static constexpr int PWM_CRUISE_SPEED = 180;                     // Normal cruise in FAR zone
-static constexpr int PWM_CAUTION_SPEED = (PWM_CRUISE_SPEED * 40) / 100; // 40% speed in CAUTION zone
+// HC-SR04 (⚠️ ECHO must have 5V→3.3V voltage divider before GPIO18)
+static constexpr int PIN_TRIG = 5;
+static constexpr int PIN_ECHO = 18;
 
 // ============================================================================
-// STATE DEFINITIONS
+// SAFETY PARAMETERS
 // ============================================================================
-enum SafetyState {
-  STOPPED,
-  FAR,
-  CAUTION,
-  DANGER_LATCHED,
-  COMMUNICATION_FAULT
+
+static constexpr uint32_t HEARTBEAT_TIMEOUT_MS         = 300;   // ms — spec requirement
+static constexpr uint32_t RECOVERY_CLEAR_MS            = 2000;  // ms — 2 s clear-path recovery
+static constexpr uint32_t ULTRASONIC_INTERVAL_MS       = 50;    // ms — 20 Hz sampling
+static constexpr float    ULTRASONIC_DANGER_THRESHOLD_CM = 50.0f; // cm — conservative bench value
+
+// Set to true only after hardware validation with wheels raised.
+static constexpr bool MOTOR_OUTPUTS_ENABLED = false;
+
+// PWM speed levels (8-bit, 0–255)
+static constexpr int PWM_CRUISE_SPEED  = 180;
+static constexpr int PWM_CAUTION_SPEED = (PWM_CRUISE_SPEED * 40) / 100; // 40% of cruise
+
+// ============================================================================
+// PIECEWISE LINEAR ULTRASONIC CALIBRATION
+// 8 bench points; maps raw sensor reading (cm) → actual distance (cm)
+// Calibrated range: raw 8.08–73.45 cm → actual 10–75 cm
+// Readings outside this range are flagged, not silently extrapolated.
+// ============================================================================
+struct CalPoint { float raw_cm; float actual_cm; };
+
+static const CalPoint CAL_TABLE[] = {
+  {  8.08f, 10.0f },
+  { 18.76f, 20.0f },
+  { 27.68f, 30.0f },
+  { 37.47f, 40.0f },
+  { 47.20f, 50.0f },
+  { 57.56f, 60.0f },
+  { 68.74f, 70.0f },
+  { 73.45f, 75.0f },
+};
+static constexpr int CAL_POINTS = 8;
+static constexpr float ULTRASONIC_OUT_OF_RANGE_CM = 999.0f;
+
+enum class UltrasonicStatus { OK, BELOW_RANGE, ABOVE_RANGE, TIMEOUT };
+
+struct UltrasonicResult {
+  float raw_cm;
+  float calibrated_cm;
+  UltrasonicStatus status;
 };
 
-SafetyState state = STOPPED;
-SafetyState previousState = STOPPED;
-
-uint32_t lastValidMessageMs = 0;
-uint32_t clearSinceMs = 0;
-bool haveValidMessage = false;
-String lineBuffer;
-
-// Ultrasonic sensor state
-float latestUltrasonicDistanceCm = 999.0f;
-uint32_t lastUltrasonicSampleMs = 0;
-
-// Non-blocking indicator blink timer
-uint32_t lastBlinkToggleMs = 0;
-bool blinkState = false;
+float piecewiseCalibrate(float raw_cm) {
+  if (raw_cm <= CAL_TABLE[0].raw_cm) {
+    float slope = (CAL_TABLE[1].actual_cm - CAL_TABLE[0].actual_cm) /
+                  (CAL_TABLE[1].raw_cm    - CAL_TABLE[0].raw_cm);
+    return CAL_TABLE[0].actual_cm + slope * (raw_cm - CAL_TABLE[0].raw_cm);
+  }
+  if (raw_cm >= CAL_TABLE[CAL_POINTS-1].raw_cm) {
+    int n = CAL_POINTS - 1;
+    float slope = (CAL_TABLE[n].actual_cm - CAL_TABLE[n-1].actual_cm) /
+                  (CAL_TABLE[n].raw_cm    - CAL_TABLE[n-1].raw_cm);
+    return CAL_TABLE[n].actual_cm + slope * (raw_cm - CAL_TABLE[n].raw_cm);
+  }
+  for (int i = 0; i < CAL_POINTS - 1; i++) {
+    if (raw_cm >= CAL_TABLE[i].raw_cm && raw_cm <= CAL_TABLE[i+1].raw_cm) {
+      float t = (raw_cm - CAL_TABLE[i].raw_cm) /
+                (CAL_TABLE[i+1].raw_cm - CAL_TABLE[i].raw_cm);
+      return CAL_TABLE[i].actual_cm + t * (CAL_TABLE[i+1].actual_cm - CAL_TABLE[i].actual_cm);
+    }
+  }
+  return raw_cm;
+}
 
 // ============================================================================
-// MOTOR CONTROL PRIMITIVES
+// STATE MACHINE
+// ============================================================================
+enum SafetyState {
+  STATE_BOOT_STOPPED,
+  STATE_FAR,
+  STATE_CAUTION,
+  STATE_DANGER_LATCHED,
+  STATE_COMM_FAULT
+};
+
+SafetyState g_state          = STATE_BOOT_STOPPED;
+uint32_t    g_lastValidMsgMs = 0;
+uint32_t    g_clearSinceMs   = 0;
+bool        g_haveValidMsg   = false;
+String      g_lineBuffer;
+
+UltrasonicResult g_latestUS = {ULTRASONIC_OUT_OF_RANGE_CM,
+                                ULTRASONIC_OUT_OF_RANGE_CM,
+                                UltrasonicStatus::TIMEOUT};
+uint32_t g_lastUltrasonicMs = 0;
+uint32_t g_lastBlinkMs      = 0;
+bool     g_blinkState       = false;
+
+// ============================================================================
+// LEDC PWM
+// ============================================================================
+void motorPwmSetup() {
+  ledcSetup(LEDC_CH_A, LEDC_FREQ_HZ, LEDC_RES_BITS);
+  ledcSetup(LEDC_CH_B, LEDC_FREQ_HZ, LEDC_RES_BITS);
+  ledcAttachPin(PIN_PWMA, LEDC_CH_A);
+  ledcAttachPin(PIN_PWMB, LEDC_CH_B);
+}
+
+// ============================================================================
+// MOTOR CONTROL
 // ============================================================================
 void allMotorsStop() {
-  if (PIN_STBY >= 0) digitalWrite(PIN_STBY, LOW);
-  if (PIN_AIN1 >= 0) digitalWrite(PIN_AIN1, LOW);
-  if (PIN_AIN2 >= 0) digitalWrite(PIN_AIN2, LOW);
-  if (PIN_BIN1 >= 0) digitalWrite(PIN_BIN1, LOW);
-  if (PIN_BIN2 >= 0) digitalWrite(PIN_BIN2, LOW);
-  if (PIN_PWMA >= 0) analogWrite(PIN_PWMA, 0);
-  if (PIN_PWMB >= 0) analogWrite(PIN_PWMB, 0);
+  ledcWrite(LEDC_CH_A, 0);
+  ledcWrite(LEDC_CH_B, 0);
+  digitalWrite(PIN_AIN1, LOW);
+  digitalWrite(PIN_AIN2, LOW);
+  digitalWrite(PIN_BIN1, LOW);
+  digitalWrite(PIN_BIN2, LOW);
+}
+
+void setChannelA(int pwm) {
+  if (!MOTOR_OUTPUTS_ENABLED) { allMotorsStop(); return; }
+  pwm = constrain(pwm, -255, 255);
+  if (pwm > 0) {
+    digitalWrite(PIN_AIN1, HIGH); digitalWrite(PIN_AIN2, LOW);
+    ledcWrite(LEDC_CH_A, pwm);
+  } else if (pwm < 0) {
+    digitalWrite(PIN_AIN1, LOW); digitalWrite(PIN_AIN2, HIGH);
+    ledcWrite(LEDC_CH_A, -pwm);
+  } else {
+    digitalWrite(PIN_AIN1, LOW); digitalWrite(PIN_AIN2, LOW);
+    ledcWrite(LEDC_CH_A, 0);
+  }
+}
+
+void setChannelB(int pwm) {
+  if (!MOTOR_OUTPUTS_ENABLED) { allMotorsStop(); return; }
+  pwm = constrain(pwm, -255, 255);
+  if (pwm > 0) {
+    digitalWrite(PIN_BIN1, HIGH); digitalWrite(PIN_BIN2, LOW);
+    ledcWrite(LEDC_CH_B, pwm);
+  } else if (pwm < 0) {
+    digitalWrite(PIN_BIN1, LOW); digitalWrite(PIN_BIN2, HIGH);
+    ledcWrite(LEDC_CH_B, -pwm);
+  } else {
+    digitalWrite(PIN_BIN1, LOW); digitalWrite(PIN_BIN2, LOW);
+    ledcWrite(LEDC_CH_B, 0);
+  }
 }
 
 void setMotorSpeeds(int leftPwm, int rightPwm) {
-  if (!MOTOR_OUTPUTS_ENABLED) {
-    allMotorsStop();
-    return;
-  }
+  setChannelA(leftPwm);
+  setChannelB(rightPwm);
+}
 
-  leftPwm = constrain(leftPwm, -255, 255);
-  rightPwm = constrain(rightPwm, -255, 255);
+// ============================================================================
+// INDICATORS
+// ============================================================================
+inline void buzzerWrite(bool on) {
+  bool level = BUZZER_ACTIVE_HIGH ? on : !on;
+  digitalWrite(PIN_BUZZER, level ? HIGH : LOW);
+}
 
-  if (PIN_STBY >= 0) digitalWrite(PIN_STBY, HIGH);
-
-  // Left Motor
-  if (leftPwm > 0) {
-    if (PIN_AIN1 >= 0) digitalWrite(PIN_AIN1, HIGH);
-    if (PIN_AIN2 >= 0) digitalWrite(PIN_AIN2, LOW);
-    if (PIN_PWMA >= 0) analogWrite(PIN_PWMA, leftPwm);
-  } else if (leftPwm < 0) {
-    if (PIN_AIN1 >= 0) digitalWrite(PIN_AIN1, LOW);
-    if (PIN_AIN2 >= 0) digitalWrite(PIN_AIN2, HIGH);
-    if (PIN_PWMA >= 0) analogWrite(PIN_PWMA, -leftPwm);
-  } else {
-    if (PIN_AIN1 >= 0) digitalWrite(PIN_AIN1, LOW);
-    if (PIN_AIN2 >= 0) digitalWrite(PIN_AIN2, LOW);
-    if (PIN_PWMA >= 0) analogWrite(PIN_PWMA, 0);
-  }
-
-  // Right Motor
-  if (rightPwm > 0) {
-    if (PIN_BIN1 >= 0) digitalWrite(PIN_BIN1, HIGH);
-    if (PIN_BIN2 >= 0) digitalWrite(PIN_BIN2, LOW);
-    if (PIN_PWMB >= 0) analogWrite(PIN_PWMB, rightPwm);
-  } else if (rightPwm < 0) {
-    if (PIN_BIN1 >= 0) digitalWrite(PIN_BIN1, LOW);
-    if (PIN_BIN2 >= 0) digitalWrite(PIN_BIN2, HIGH);
-    if (PIN_PWMB >= 0) analogWrite(PIN_PWMB, -rightPwm);
-  } else {
-    if (PIN_BIN1 >= 0) digitalWrite(PIN_BIN1, LOW);
-    if (PIN_BIN2 >= 0) digitalWrite(PIN_BIN2, LOW);
-    if (PIN_PWMB >= 0) analogWrite(PIN_PWMB, 0);
+void updateIndicators() {
+  uint32_t now = millis();
+  switch (g_state) {
+    case STATE_FAR:
+      if (PIN_LED >= 0) digitalWrite(PIN_LED, LOW);
+      buzzerWrite(false);
+      break;
+    case STATE_CAUTION:
+      if (now - g_lastBlinkMs >= 125) {
+        g_lastBlinkMs = now;
+        g_blinkState  = !g_blinkState;
+        if (PIN_LED >= 0) digitalWrite(PIN_LED, g_blinkState);
+        buzzerWrite(g_blinkState);
+      }
+      break;
+    case STATE_DANGER_LATCHED:
+      if (PIN_LED >= 0) digitalWrite(PIN_LED, HIGH);
+      buzzerWrite(true);
+      break;
+    case STATE_COMM_FAULT:
+    case STATE_BOOT_STOPPED:
+    default:
+      if (now - g_lastBlinkMs >= 100) {
+        g_lastBlinkMs = now;
+        g_blinkState  = !g_blinkState;
+        if (PIN_LED >= 0) digitalWrite(PIN_LED, g_blinkState);
+        buzzerWrite(false); // Silent during fault blink
+      }
+      break;
   }
 }
 
 // ============================================================================
-// ULTRASONIC SENSOR DRIVER & CALIBRATION
+// ULTRASONIC UPDATE
 // ============================================================================
-float readUltrasonicRawCm() {
-  if (PIN_TRIG < 0 || PIN_ECHO < 0) return 999.0f;
+void updateUltrasonic() {
+  uint32_t now = millis();
+  if (now - g_lastUltrasonicMs < ULTRASONIC_INTERVAL_MS) return;
+  g_lastUltrasonicMs = now;
+
+  UltrasonicResult r;
+  if (PIN_TRIG < 0 || PIN_ECHO < 0) {
+    r = {ULTRASONIC_OUT_OF_RANGE_CM, ULTRASONIC_OUT_OF_RANGE_CM, UltrasonicStatus::TIMEOUT};
+    g_latestUS = r;
+    return;
+  }
 
   digitalWrite(PIN_TRIG, LOW);
   delayMicroseconds(2);
@@ -146,263 +264,222 @@ float readUltrasonicRawCm() {
   delayMicroseconds(10);
   digitalWrite(PIN_TRIG, LOW);
 
-  // Timeout of 25000 us (~4.3 meters max range)
-  unsigned long durationUs = pulseIn(PIN_ECHO, HIGH, 25000);
-  if (durationUs == 0) {
-    return 999.0f; // Out of range or no echo received
-  }
-
-  // Speed of sound: 343 m/s => 29.1 us/cm round trip => duration / 58.2
-  float rawDistanceCm = (float)durationUs / 58.2f;
-  return rawDistanceCm;
-}
-
-float readUltrasonicCalibratedCm() {
-  float rawCm = readUltrasonicRawCm();
-  if (rawCm >= 400.0f || rawCm <= 1.0f) {
-    return rawCm; // Pass through out-of-range or invalid signals
-  }
-  // Apply linear regression model derived from bench calibration dataset
-  float calibratedCm = (rawCm * ULTRASONIC_SLOPE) + ULTRASONIC_INTERCEPT;
-  return calibratedCm;
-}
-
-void updateUltrasonic() {
-  uint32_t now = millis();
-  if (now - lastUltrasonicSampleMs < ULTRASONIC_INTERVAL_MS) {
+  unsigned long dur = pulseIn(PIN_ECHO, HIGH, 25000UL);
+  if (dur == 0) {
+    r = {ULTRASONIC_OUT_OF_RANGE_CM, ULTRASONIC_OUT_OF_RANGE_CM, UltrasonicStatus::TIMEOUT};
+    g_latestUS = r;
     return;
   }
-  lastUltrasonicSampleMs = now;
 
-  float sample = readUltrasonicCalibratedCm();
-  // Simple outlier filter: only update if reasonable
-  if (sample > 1.0f) {
-    latestUltrasonicDistanceCm = sample;
+  float raw = (float)dur / 58.2f;
+  r.raw_cm       = raw;
+  r.calibrated_cm = piecewiseCalibrate(raw);
+
+  if (raw < CAL_TABLE[0].raw_cm)
+    r.status = UltrasonicStatus::BELOW_RANGE;
+  else if (raw > CAL_TABLE[CAL_POINTS-1].raw_cm)
+    r.status = UltrasonicStatus::ABOVE_RANGE;
+  else
+    r.status = UltrasonicStatus::OK;
+
+  g_latestUS = r;
+
+  // Serial Monitor output
+  Serial.print("[US] raw="); Serial.print(raw, 1);
+  Serial.print("cm cal="); Serial.print(r.calibrated_cm, 1);
+  Serial.print("cm ");
+  switch (r.status) {
+    case UltrasonicStatus::OK:          Serial.println("OK"); break;
+    case UltrasonicStatus::BELOW_RANGE: Serial.println("BELOW_CAL_RANGE"); break;
+    case UltrasonicStatus::ABOVE_RANGE: Serial.println("ABOVE_CAL_RANGE (not safety-critical)"); break;
+    default: break;
   }
 
-  // INDEPENDENT SAFETY TRIGGER:
-  // If the ultrasonic sensor detects an obstacle closer than 1.0 m (100 cm),
-  // immediately trigger DANGER_LATCHED regardless of Pi messages.
-  if (latestUltrasonicDistanceCm < ULTRASONIC_DANGER_THRESHOLD_CM && state != DANGER_LATCHED) {
-    clearSinceMs = 0;
-    enterStop(DANGER_LATCHED);
-    Serial.print("WARN: Ultrasonic independent trigger fired! Distance: ");
-    Serial.print(latestUltrasonicDistanceCm);
-    Serial.println(" cm");
-  }
-}
-
-// ============================================================================
-// INDICATOR CONTROL
-// ============================================================================
-void updateIndicators() {
-  uint32_t now = millis();
-
-  switch (state) {
-    case FAR:
-      if (PIN_LED >= 0) digitalWrite(PIN_LED, LOW);
-      if (PIN_BUZZER >= 0) digitalWrite(PIN_BUZZER, LOW);
-      break;
-
-    case CAUTION:
-      // Beep and blink at 4 Hz (every 125 ms toggle)
-      if (now - lastBlinkToggleMs >= 125) {
-        lastBlinkToggleMs = now;
-        blinkState = !blinkState;
-        if (PIN_LED >= 0) digitalWrite(PIN_LED, blinkState ? HIGH : LOW);
-        if (PIN_BUZZER >= 0) digitalWrite(PIN_BUZZER, blinkState ? HIGH : LOW);
-      }
-      break;
-
-    case DANGER_LATCHED:
-      // Solid LED, continuous loud alarm
-      if (PIN_LED >= 0) digitalWrite(PIN_LED, HIGH);
-      if (PIN_BUZZER >= 0) digitalWrite(PIN_BUZZER, HIGH);
-      break;
-
-    case COMMUNICATION_FAULT:
-    case STOPPED:
-      // Fast alert flash
-      if (now - lastBlinkToggleMs >= 200) {
-        lastBlinkToggleMs = now;
-        blinkState = !blinkState;
-        if (PIN_LED >= 0) digitalWrite(PIN_LED, blinkState ? HIGH : LOW);
-        if (PIN_BUZZER >= 0) digitalWrite(PIN_BUZZER, LOW);
-      }
-      break;
+  // Independent near-field safety trigger (only on OK or BELOW_RANGE readings)
+  bool validForSafety = (r.status == UltrasonicStatus::OK ||
+                         r.status == UltrasonicStatus::BELOW_RANGE);
+  if (validForSafety && r.calibrated_cm < ULTRASONIC_DANGER_THRESHOLD_CM &&
+      g_state != STATE_DANGER_LATCHED) {
+    g_clearSinceMs = 0;
+    enterStop(STATE_DANGER_LATCHED);
+    Serial.print("DANGER: Ultrasonic independent trigger! cal=");
+    Serial.print(r.calibrated_cm, 1);
+    Serial.print("cm < ");
+    Serial.print(ULTRASONIC_DANGER_THRESHOLD_CM, 0);
+    Serial.println("cm threshold");
   }
 }
 
+bool ultrasonicPathClear() {
+  if (g_latestUS.status == UltrasonicStatus::ABOVE_RANGE ||
+      g_latestUS.status == UltrasonicStatus::TIMEOUT) return true;
+  return g_latestUS.calibrated_cm >= ULTRASONIC_DANGER_THRESHOLD_CM;
+}
+
 // ============================================================================
-// STATE MACHINE TRANSITIONS
+// STATE MACHINE HELPERS
 // ============================================================================
 void enterStop(SafetyState reason) {
   allMotorsStop();
-  state = reason;
+  g_state = reason;
 }
 
 void applyVehicleActuation() {
-  switch (state) {
-    case FAR:
-      setMotorSpeeds(PWM_CRUISE_SPEED, PWM_CRUISE_SPEED);
-      break;
-    case CAUTION:
-      setMotorSpeeds(PWM_CAUTION_SPEED, PWM_CAUTION_SPEED);
-      break;
-    case DANGER_LATCHED:
-    case COMMUNICATION_FAULT:
-    case STOPPED:
-    default:
-      allMotorsStop();
-      break;
+  switch (g_state) {
+    case STATE_FAR:     setMotorSpeeds(PWM_CRUISE_SPEED,  PWM_CRUISE_SPEED);  break;
+    case STATE_CAUTION: setMotorSpeeds(PWM_CAUTION_SPEED, PWM_CAUTION_SPEED); break;
+    default:            allMotorsStop();                                        break;
   }
 }
 
 // ============================================================================
-// PROTOCOL PARSING & VALIDATION
+// PROTOCOL PARSING
 // ============================================================================
 bool parseAndHandle(const String &line) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, line);
   if (err) {
-    enterStop(COMMUNICATION_FAULT);
+    Serial.print("PARSE_ERR: "); Serial.println(err.c_str());
+    enterStop(STATE_COMM_FAULT);
     return false;
   }
 
-  // Protocol v1 validation
   if (doc["v"] != 1 ||
       !doc["seq"].is<unsigned long>() ||
-      !doc["zone"].is<const char *>() ||
+      !doc["zone"].is<const char*>() ||
       !doc["heartbeat"].is<bool>() ||
       !doc["pedestrian"].is<bool>() ||
       !doc["confidence"].is<float>()) {
-    enterStop(COMMUNICATION_FAULT);
+    Serial.println("PARSE_ERR: missing/invalid fields");
+    enterStop(STATE_COMM_FAULT);
     return false;
   }
 
-  const char *zone = doc["zone"];
-  if (strcmp(zone, "FAR") != 0 && strcmp(zone, "CAUTION") != 0 && strcmp(zone, "DANGER") != 0) {
-    enterStop(COMMUNICATION_FAULT);
+  const char* zone = doc["zone"];
+  if (strcmp(zone,"FAR")!=0 && strcmp(zone,"CAUTION")!=0 && strcmp(zone,"DANGER")!=0) {
+    Serial.print("PARSE_ERR: bad zone: "); Serial.println(zone);
+    enterStop(STATE_COMM_FAULT);
     return false;
   }
 
-  lastValidMessageMs = millis();
-  haveValidMessage = true;
+  g_lastValidMsgMs = millis();
+  g_haveValidMsg   = true;
 
-  // 1. Camera reports DANGER -> instant latch
-  if (strcmp(zone, "DANGER") == 0) {
-    clearSinceMs = 0;
-    enterStop(DANGER_LATCHED);
+  Serial.print("[RX] seq="); Serial.print((unsigned long)doc["seq"]);
+  Serial.print(" zone="); Serial.print(zone);
+  Serial.print(" ped="); Serial.print((bool)doc["pedestrian"]);
+  Serial.print(" conf="); Serial.println((float)doc["confidence"], 2);
+
+  // 1. DANGER from camera → immediate latch
+  if (strcmp(zone,"DANGER") == 0) {
+    g_clearSinceMs = 0;
+    enterStop(STATE_DANGER_LATCHED);
+    Serial.println("DANGER: camera zone → latch");
     return true;
   }
 
-  // 2. Ultrasonic reports DANGER -> keep latched
-  if (latestUltrasonicDistanceCm < ULTRASONIC_DANGER_THRESHOLD_CM) {
-    clearSinceMs = 0;
-    enterStop(DANGER_LATCHED);
+  // 2. Ultrasonic still danger → keep latched
+  if (!ultrasonicPathClear()) {
+    g_clearSinceMs = 0;
+    enterStop(STATE_DANGER_LATCHED);
+    Serial.println("DANGER: ultrasonic still active → maintain latch");
     return true;
   }
 
-  // 3. Recovery check from DANGER_LATCHED, COMMUNICATION_FAULT, or STOPPED
-  if (state == DANGER_LATCHED || state == COMMUNICATION_FAULT || state == STOPPED) {
-    // Both camera must be FAR and ultrasonic must be clear
-    bool pathClear = (strcmp(zone, "FAR") == 0 && latestUltrasonicDistanceCm >= ULTRASONIC_DANGER_THRESHOLD_CM);
+  // 3. Recovery from latched states (requires both camera FAR AND ultrasonic clear)
+  if (g_state == STATE_DANGER_LATCHED ||
+      g_state == STATE_COMM_FAULT    ||
+      g_state == STATE_BOOT_STOPPED) {
 
-    if (pathClear) {
-      if (clearSinceMs == 0) {
-        clearSinceMs = millis();
+    bool camClear = (strcmp(zone,"FAR") == 0);
+    if (camClear && ultrasonicPathClear()) {
+      if (g_clearSinceMs == 0) {
+        g_clearSinceMs = millis();
+        Serial.println("RECOVERY: path clear — 2s timer started");
       }
-      if (millis() - clearSinceMs >= RECOVERY_CLEAR_MS) {
-        // Recovery satisfied! Re-arm to FAR or CAUTION
-        state = (strcmp(zone, "CAUTION") == 0) ? CAUTION : FAR;
-        clearSinceMs = 0;
+      uint32_t elapsed = millis() - g_clearSinceMs;
+      if (elapsed >= RECOVERY_CLEAR_MS) {
+        Serial.println("RECOVERY: 2s satisfied → resuming FAR");
+        g_state = STATE_FAR;
+        g_clearSinceMs = 0;
+        applyVehicleActuation();
       } else {
-        // Still within 2.0 s recovery latch period
+        Serial.print("RECOVERY: waiting "); Serial.print(elapsed); Serial.println("ms");
         allMotorsStop();
-        return true;
       }
     } else {
-      // Path not clear: reset recovery timer
-      clearSinceMs = 0;
+      g_clearSinceMs = 0;
       allMotorsStop();
-      return true;
     }
-  } else {
-    // Normal operation: transition between FAR and CAUTION
-    state = (strcmp(zone, "CAUTION") == 0) ? CAUTION : FAR;
+    return true;
   }
 
+  // 4. Normal FAR ↔ CAUTION
+  g_state = (strcmp(zone,"CAUTION")==0) ? STATE_CAUTION : STATE_FAR;
   applyVehicleActuation();
   return true;
 }
 
 // ============================================================================
-// MAIN SETUP & LOOP
+// SETUP & LOOP
 // ============================================================================
 void setup() {
   Serial.begin(SERIAL_BAUD);
 
-  // Indicators
-  if (PIN_LED >= 0) pinMode(PIN_LED, OUTPUT);
-  if (PIN_BUZZER >= 0) pinMode(PIN_BUZZER, OUTPUT);
+  if (PIN_LED    >= 0) { pinMode(PIN_LED,    OUTPUT); digitalWrite(PIN_LED,    LOW); }
+  if (PIN_BUZZER >= 0) { pinMode(PIN_BUZZER, OUTPUT); buzzerWrite(false); }
+  if (PIN_TRIG   >= 0) { pinMode(PIN_TRIG,   OUTPUT); digitalWrite(PIN_TRIG,   LOW); }
+  if (PIN_ECHO   >= 0) { pinMode(PIN_ECHO,   INPUT); }
 
-  // Ultrasonic
-  if (PIN_TRIG >= 0) pinMode(PIN_TRIG, OUTPUT);
-  if (PIN_ECHO >= 0) pinMode(PIN_ECHO, INPUT);
+  pinMode(PIN_AIN1, OUTPUT); digitalWrite(PIN_AIN1, LOW);
+  pinMode(PIN_AIN2, OUTPUT); digitalWrite(PIN_AIN2, LOW);
+  pinMode(PIN_BIN1, OUTPUT); digitalWrite(PIN_BIN1, LOW);
+  pinMode(PIN_BIN2, OUTPUT); digitalWrite(PIN_BIN2, LOW);
 
-  // Motor Driver Pins
-  if (PIN_STBY >= 0) pinMode(PIN_STBY, OUTPUT);
-  if (PIN_AIN1 >= 0) pinMode(PIN_AIN1, OUTPUT);
-  if (PIN_AIN2 >= 0) pinMode(PIN_AIN2, OUTPUT);
-  if (PIN_PWMA >= 0) pinMode(PIN_PWMA, OUTPUT);
-  if (PIN_BIN1 >= 0) pinMode(PIN_BIN1, OUTPUT);
-  if (PIN_BIN2 >= 0) pinMode(PIN_BIN2, OUTPUT);
-  if (PIN_PWMB >= 0) pinMode(PIN_PWMB, OUTPUT);
-
+  motorPwmSetup();
   allMotorsStop();
-  enterStop(STOPPED);
+  enterStop(STATE_BOOT_STOPPED);
 
-  Serial.println("=================================================");
-  Serial.println("BOOT: Pedestrian Safety Vehicle ESP32 Initialized");
-  Serial.println("Status: FAIL-STOPPED. Waiting for UART & Clear Path");
-  Serial.print("Ultrasonic Calibration Model: actual = ");
-  Serial.print(ULTRASONIC_SLOPE, 4);
-  Serial.print(" * sensor + ");
-  Serial.print(ULTRASONIC_INTERCEPT, 4);
-  Serial.println(" cm");
-  Serial.println("=================================================");
+  Serial.println("=========================================");
+  Serial.println("BOOT: Pedestrian Safety Vehicle v2.0");
+  Serial.println("State: BOOT_STOPPED — motors off");
+  Serial.print  ("MOTOR_OUTPUTS_ENABLED: ");
+  Serial.println(MOTOR_OUTPUTS_ENABLED ? "YES (wheels raised?)" : "NO (safe default)");
+  Serial.print  ("Ultrasonic danger threshold: ");
+  Serial.print  (ULTRASONIC_DANGER_THRESHOLD_CM, 0); Serial.println(" cm");
+  Serial.print  ("Heartbeat timeout: ");
+  Serial.print  (HEARTBEAT_TIMEOUT_MS); Serial.println(" ms");
+  Serial.println("Ultrasonic: piecewise linear, 8 points, 10-75 cm");
+  Serial.println("=========================================");
 }
 
 void loop() {
-  // 1. Process UART Serial Input
   while (Serial.available() > 0) {
     char c = static_cast<char>(Serial.read());
     if (c == '\n') {
-      lineBuffer.trim();
-      if (lineBuffer.length() > 0) {
-        parseAndHandle(lineBuffer);
-      }
-      lineBuffer = "";
-    } else if (lineBuffer.length() < 512) {
-      lineBuffer += c;
+      g_lineBuffer.trim();
+      if (g_lineBuffer.length() > 0) parseAndHandle(g_lineBuffer);
+      g_lineBuffer = "";
+    } else if (g_lineBuffer.length() < 512) {
+      g_lineBuffer += c;
     } else {
-      lineBuffer = "";
-      enterStop(COMMUNICATION_FAULT);
+      g_lineBuffer = "";
+      Serial.println("PARSE_ERR: buffer overflow");
+      enterStop(STATE_COMM_FAULT);
     }
   }
 
-  // 2. Update Ultrasonic distance & safety trigger
   updateUltrasonic();
 
-  // 3. Heartbeat Watchdog: Stop vehicle if no valid message within 500 ms
-  if (!haveValidMessage || (millis() - lastValidMessageMs > HEARTBEAT_TIMEOUT_MS)) {
-    if (state != COMMUNICATION_FAULT) {
-      enterStop(COMMUNICATION_FAULT);
+  if (g_haveValidMsg && (millis() - g_lastValidMsgMs > HEARTBEAT_TIMEOUT_MS)) {
+    if (g_state != STATE_COMM_FAULT) {
+      Serial.print("WATCHDOG: timeout after ");
+      Serial.print(millis() - g_lastValidMsgMs);
+      Serial.println("ms → COMM_FAULT");
+      enterStop(STATE_COMM_FAULT);
     }
   }
 
-  // 4. Update Indicators (LED & Buzzer alert patterns)
   updateIndicators();
-
   delay(2);
 }
